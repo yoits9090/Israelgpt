@@ -8,6 +8,8 @@ import json
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+from tickets import setup_ticket_system
+
 # Load environment variables
 load_dotenv()
 
@@ -23,6 +25,9 @@ intents.members = True
 
 # Bot setup
 bot = commands.Bot(command_prefix=',', intents=intents)
+
+# Setup external systems (tickets, etc.)
+setup_ticket_system(bot)
 
 # Data storage
 user_data = defaultdict(lambda: {"messages": 0, "level": 0, "xp": 0})
