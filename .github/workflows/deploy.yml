@@ -29,6 +29,11 @@ jobs:
         script: |
           cd /home/ubuntu/israelgpt
           
+          # Create .env file from secrets
+          echo "Creating .env file..."
+          echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" > .env
+          echo "AUTO_ROLE_ID=${{ secrets.AUTO_ROLE_ID }}" >> .env
+          
           # Build the image
           echo "Building Docker image..."
           sudo docker build -t israelgpt-bot .

@@ -27,13 +27,16 @@ async def on_ready():
 @bot.event
 async def on_member_join(member):
     # Auto Role
-    role = discord.utils.get(member.guild.roles, name=AUTO_ROLE_NAME)
-    if role:
-        try:
-            await member.add_roles(role)
-            print(f"Assigned role {role.name} to {member.name}")
-        except Exception as e:
-            print(f"Failed to assign role: {e}")
+    if AUTO_ROLE_ID:
+        role = member.guild.get_role(AUTO_ROLE_ID)
+        if role:
+            try:
+                await member.add_roles(role)
+                print(f"Assigned role {role.name} ({role.id}) to {member.name}")
+            except Exception as e:
+                print(f"Failed to assign role: {e}")
+        else:
+            print(f"Role with ID {AUTO_ROLE_ID} not found")
 
     # Welcome Message
     channel = member.guild.system_channel
