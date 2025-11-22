@@ -18,7 +18,7 @@ intents.message_content = True
 intents.members = True
 
 # Bot setup
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix=',', intents=intents)
 
 @bot.event
 async def on_ready():
@@ -42,7 +42,7 @@ async def on_member_join(member):
     # Welcome Message
     channel = member.guild.system_channel
     if channel:
-        await channel.send(f"Shalom {member.mention}! Welcome to the mishpacha (family)!")
+        await channel.send(f"What's up! Welcome to Gems! {member.mention}")
 
 @bot.command(name='ban')
 @commands.has_permissions(ban_members=True)
