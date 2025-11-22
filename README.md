@@ -8,8 +8,25 @@ A discord bot with a dash of chutzpah! This bot features basic moderation, auto-
   - `!ban [user] [reason]`: Bans a user ("Oy vey, you've been banned").
   - `!kick [user] [reason]`: Kicks a user ("Yalla bye").
   - `!clear [amount]`: Clears messages ("Cleaning up the balagan").
-- **Auto Roles**: Automatically assigns a role (default: "Member") when a new user joins.
+
+- **Auto Roles**: Automatically assigns a role by ID when a new user joins.
+
 - **Server Info**: `!info` command to show server stats.
+
+- **Avatars & Banners**:
+  - `!avatar [@user]` (aliases: `!av`, `!pfp`): Shows user's avatar.
+  - `!banner [@user]`: Shows user's banner (if they have one).
+  - `!servericon` (alias: `!guildicon`): Shows server icon.
+  - `!serverbanner` (alias: `!guildbanner`): Shows server banner.
+
+- **Music Streaming** (yt-dlp powered):
+  - `!play [url/search]` (alias: `!p`): Play audio from YouTube or search.
+  - `!pause`: Pause current track.
+  - `!resume`: Resume playback.
+  - `!skip`: Skip current track.
+  - `!stop`: Stop playback and clear queue.
+  - `!leave` (aliases: `!disconnect`, `!dc`): Leave voice channel.
+
 - **Events**:
   - Welcome message: "Shalom [user]!"
   - Activity status: Playing "Shesh Besh".
@@ -45,7 +62,7 @@ A discord bot with a dash of chutzpah! This bot features basic moderation, auto-
      cp .env.example .env
      ```
    - Edit `.env` and add your `DISCORD_TOKEN`.
-   - Optionally change `AUTO_ROLE_NAME` to the role you want assigned on join.
+   - Add `AUTO_ROLE_ID` with the role ID you want assigned on join.
 
 5. **Run the bot**:
    ```bash
@@ -73,16 +90,24 @@ The bot is deployed to an EC2 instance using GitHub Actions.
 ### GitHub Actions Setup
 1. Go to your repository **Settings** > **Secrets and variables** > **Actions**.
 2. Add the following repository secrets:
+   - `DISCORD_TOKEN`: Your Discord bot token.
+   - `AUTO_ROLE_ID`: Role ID to assign on member join.
    - `EC2_HOST`: Public IP or hostname of your EC2 instance.
    - `EC2_USERNAME`: SSH username (e.g., `ubuntu`).
    - `EC2_SSH_KEY`: Private SSH key (PEM format) for the instance.
 
 ### EC2 Setup
-1. Ensure Docker is installed on your EC2 instance.
+1. Install Docker on your EC2 instance:
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y docker.io
+   sudo systemctl start docker
+   sudo systemctl enable docker
+   ```
 2. Create the directory `/home/ubuntu/israelgpt`.
-3. **Important**: Create a `.env` file in `/home/ubuntu/israelgpt/.env` with your `DISCORD_TOKEN` (since it's not in the repo).
 
 The workflow (`.github/workflows/deploy.yml`) will automatically:
 1. Copy the repository files to the EC2 instance.
-2. Build the Docker image on the server.
-3. Restart the bot container.
+2. Create the `.env` file from GitHub Secrets.
+3. Build the Docker image on the server.
+4. Restart the bot container.
