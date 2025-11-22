@@ -4,11 +4,13 @@ import os
 from dotenv import load_dotenv
 import asyncio
 import yt_dlp
-import json
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from tickets import setup_ticket_system
+from tickets import setup_ticket_system, register_ticket_view
+from levels_db import increment_activity, get_user_stats, get_top_users
+from user_tracking import record_message
+from llm_client import generate_israeli_reply
 
 # Load environment variables
 load_dotenv()
@@ -29,40 +31,14 @@ bot = commands.Bot(command_prefix=',', intents=intents)
 # Setup external systems (tickets, etc.)
 setup_ticket_system(bot)
 
-# Data storage
-user_data = defaultdict(lambda: {"messages": 0, "level": 0, "xp": 0})
+# In-memory tracking only for anti-nuke
 message_timestamps = defaultdict(list)  # Track message timestamps for anti-nuke
-DATA_FILE = "data/user_data.json"
-
-def load_data():
-    """Load user data from file"""
-    try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r') as f:
-                data = json.load(f)
-                for user_id, info in data.items():
-                    user_data[int(user_id)] = info
-    except Exception as e:
-        print(f"Error loading data: {e}")
-
-def save_data():
-    """Save user data to file"""
-    try:
-        os.makedirs("data", exist_ok=True)
-        with open(DATA_FILE, 'w') as f:
-            json.dump({str(k): v for k, v in user_data.items()}, f, indent=2)
-    except Exception as e:
-        print(f"Error saving data: {e}")
-
-def calculate_level(xp):
-    """Calculate level from XP (100 XP per level)"""
-    return xp // 100
 
 @bot.event
 async def on_ready():
     print(f'{bot.user} has arrived! Shalom everyone!')
     await bot.change_presence(activity=discord.Game(name="Backgammon (Shesh Besh)"))
-    load_data()
+    register_ticket_view(bot)
 
 @bot.event
 async def on_member_join(member):
@@ -113,37 +89,54 @@ async def on_message(message):
             pass
         await bot.process_commands(message)
         return
-
-    # Track messages for leaderboard and leveling
-    user_data[user_id]["messages"] += 1
-    user_data[user_id]["xp"] += 5  # 5 XP per message
-    
-    old_level = user_data[user_id]["level"]
-    new_level = calculate_level(user_data[user_id]["xp"])
-    user_data[user_id]["level"] = new_level
-    
-    # Level up notification
-    if new_level > old_level:
-        await message.channel.send(
-            f"Mazel tov {message.author.mention}! You leveled up to level {new_level}! 🎉"
+    # Track messages for leaderboard, leveling, and user activity
+    if message.guild is not None:
+        record_message(message.guild.id, user_id, now)
+        messages, xp, level, leveled_up = increment_activity(
+            message.guild.id,
+            user_id,
+            xp_gain=5,
         )
-    
-    # Grant Gem role at 150 messages
-    if user_data[user_id]["messages"] == 150:
-        gem_role = message.guild.get_role(GEM_ROLE_ID)
-        if gem_role:
-            try:
-                await message.author.add_roles(gem_role)
-                await message.channel.send(
-                    f"Sababa! {message.author.mention} reached 150 messages and earned the {gem_role.name} role! 💎"
-                )
-            except Exception as e:
-                print(f"Failed to assign gem role: {e}")
-    
-    # Save data periodically (every 10 messages)
-    if user_data[user_id]["messages"] % 10 == 0:
-        save_data()
-    
+
+        # Level up notification
+        if leveled_up:
+            await message.channel.send(
+                f"Mazel tov {message.author.mention}! You leveled up to level {level}! 🎉"
+            )
+
+        # Grant Gem role at 150 messages
+        if messages == 150:
+            gem_role = message.guild.get_role(GEM_ROLE_ID)
+            if gem_role:
+                try:
+                    await message.author.add_roles(gem_role)
+                    await message.channel.send(
+                        f"Sababa! {message.author.mention} reached 150 messages and earned the {gem_role.name} role! 💎"
+                    )
+                except Exception as e:
+                    print(f"Failed to assign gem role: {e}")
+
+    # LLM response when the bot is mentioned (but not when running a command)
+    try:
+        mentioned_bot = bot.user is not None and bot.user in message.mentions
+    except Exception:
+        mentioned_bot = False
+
+    if mentioned_bot and not message.content.startswith(str(bot.command_prefix)):
+        content = message.content
+        if message.guild is not None and message.guild.me is not None:
+            content = content.replace(message.guild.me.mention, "").strip()
+        if not content:
+            content = "Say something helpful and friendly."
+
+        reply = await generate_israeli_reply(
+            user_message=content,
+            username=message.author.display_name,
+            guild_name=message.guild.name if message.guild else None,
+        )
+        if reply:
+            await message.reply(reply)
+
     await bot.process_commands(message)
 
 # Moderation Commands
@@ -207,37 +200,37 @@ async def toggle_role(ctx, member: discord.Member, *, role_input: str):
 # Leaderboard and Level Commands
 @bot.command(name='leaderboard', aliases=['lb', 'top'])
 async def leaderboard(ctx):
-    sorted_users = sorted(user_data.items(), key=lambda x: x[1]["messages"], reverse=True)[:10]
-    
+    rows = get_top_users(ctx.guild.id, limit=10)
+
     embed = discord.Embed(
         title="📊 Message Leaderboard",
         description="Top 10 members by message count",
         color=0x0000ff
     )
-    
-    for i, (user_id, data) in enumerate(sorted_users, 1):
-        user = await bot.fetch_user(user_id)
+
+    for i, row in enumerate(rows, 1):
+        user = await bot.fetch_user(row["user_id"])
         embed.add_field(
             name=f"{i}. {user.name}",
-            value=f"Messages: {data['messages']} | Level: {data['level']}",
+            value=f"Messages: {row['messages']} | Level: {row['level']}",
             inline=False
         )
-    
+
     embed.set_footer(text="Keep chatting to climb the ranks!")
     await ctx.send(embed=embed)
 
 @bot.command(name='rank', aliases=['level', 'stats'])
 async def rank(ctx, member: discord.Member = None):
     member = member or ctx.author
-    data = user_data[member.id]
+    stats = get_user_stats(ctx.guild.id, member.id)
     
     embed = discord.Embed(
         title=f"{member.display_name}'s Stats",
         color=0x0000ff
     )
-    embed.add_field(name="Messages", value=data["messages"], inline=True)
-    embed.add_field(name="Level", value=data["level"], inline=True)
-    embed.add_field(name="XP", value=f"{data['xp']}/100", inline=True)
+    embed.add_field(name="Messages", value=stats["messages"], inline=True)
+    embed.add_field(name="Level", value=stats["level"], inline=True)
+    embed.add_field(name="XP", value=f"{stats['xp']}/100", inline=True)
     embed.set_thumbnail(url=member.display_avatar.url)
     
     await ctx.send(embed=embed)
@@ -410,7 +403,4 @@ if __name__ == "__main__":
     if not TOKEN:
         print("Error: DISCORD_TOKEN not found in .env")
     else:
-        try:
-            bot.run(TOKEN)
-        finally:
-            save_data()
+        bot.run(TOKEN)
