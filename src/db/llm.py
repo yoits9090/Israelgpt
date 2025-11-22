@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime
 from typing import List, Tuple
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -19,7 +19,7 @@ _conn.execute(
         guild_id INTEGER,
         user_id INTEGER,
         channel_id INTEGER,
-        role TEXT NOT NULL,   -- 'user' or 'assistant'
+        role TEXT NOT NULL,
         content TEXT NOT NULL,
         created_at TEXT NOT NULL
     )
@@ -35,8 +35,6 @@ def log_message(
     content: str,
     channel_id: int | None = None,
 ) -> None:
-    """Store a single LLM-related message (user prompt or assistant reply)."""
-
     if role not in ("user", "assistant"):
         raise ValueError("role must be 'user' or 'assistant'")
 
@@ -63,12 +61,6 @@ def get_recent_conversation(
     max_messages: int = 40,
     max_chars: int = 6000,
 ) -> List[Tuple[str, str]]:
-    """Return a recent slice of conversation for this user (role, content).
-
-    Results are ordered from oldest to newest, and truncated so that the
-    total character count of contents is at most max_chars (roughly < 8k tokens).
-    """
-
     cur = _conn.execute(
         """
         SELECT role, content
@@ -79,7 +71,7 @@ def get_recent_conversation(
         """,
         (guild_id, guild_id, user_id, user_id, max_messages),
     )
-    rows = list(cur.fetchall())  # newest first
+    rows = list(cur.fetchall())
 
     selected: list[sqlite3.Row] = []
     total_chars = 0
@@ -91,6 +83,6 @@ def get_recent_conversation(
         selected.append(row)
         total_chars += c
 
-    selected.reverse()  # oldest -> newest
+    selected.reverse()
 
     return [(row["role"], row["content"]) for row in selected]

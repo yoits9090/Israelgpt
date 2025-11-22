@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from tickets import setup_ticket_system, register_ticket_view
-from levels_db import increment_activity, get_user_stats, get_top_users
-from user_tracking import record_message
+from db.levels import increment_activity, get_user_stats, get_top_users
+from db.users import record_message
 from llm_client import generate_israeli_reply
 
 # Load environment variables
