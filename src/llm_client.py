@@ -1,8 +1,10 @@
 import os
 import asyncio
-from typing import Optional
+from typing import Optional, List, Dict
 
 from groq import Groq
+
+from llm_history import log_message, get_recent_conversation
 
 
 _client: Optional[Groq] = None
@@ -22,7 +24,7 @@ def _get_client() -> Optional[Groq]:
     return _client
 
 
-def _call_groq_sync(prompt: str, system_prompt: str) -> Optional[str]:
+def _call_groq_sync(messages: list[Dict[str, str]]) -> Optional[str]:
     client = _get_client()
     if client is None:
         return None
@@ -30,10 +32,7 @@ def _call_groq_sync(prompt: str, system_prompt: str) -> Optional[str]:
     try:
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
+            messages=messages,
             max_tokens=512,
             temperature=0.7,
         )
@@ -48,6 +47,9 @@ async def generate_israeli_reply(
     user_message: str,
     username: str,
     guild_name: Optional[str] = None,
+    guild_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    channel_id: Optional[int] = None,
 ) -> Optional[str]:
     """Generate a very Israeli-sounding reply using Groq's llama-3.1-8b-instant.
 
@@ -65,11 +67,52 @@ async def generate_israeli_reply(
         "Despite the joking tone, always give a clear, correct, and helpful answer."
     )
 
-    full_prompt = (
+    # Build limited-length conversational context from history
+    history_messages: list[dict] = []
+    if guild_id is not None and user_id is not None:
+        history = get_recent_conversation(
+            guild_id=guild_id,
+            user_id=user_id,
+            max_messages=40,
+            max_chars=6000,
+        )
+        for role, content in history:
+            role_name = "assistant" if role == "assistant" else "user"
+            history_messages.append({"role": role_name, "content": content})
+
+    # For the current turn, keep content compact but informative
+    current_content = (
         f"User ({username}) in server {guild_name or 'unknown'} said:\n"
         f"{user_message}\n\n"
         "Reply in that very Israeli style, as if chatting in a Discord channel."
     )
 
+    # Log the user prompt
+    if guild_id is not None and user_id is not None:
+        log_message(
+            guild_id=guild_id,
+            user_id=user_id,
+            channel_id=channel_id,
+            role="user",
+            content=user_message,
+        )
+
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        *history_messages,
+        {"role": "user", "content": current_content},
+    ]
+
     loop = asyncio.get_running_loop()
-    return await asyncio.to_thread(_call_groq_sync, full_prompt, system_prompt)
+    reply = await asyncio.to_thread(_call_groq_sync, messages)
+
+    if reply is not None and guild_id is not None and user_id is not None:
+        log_message(
+            guild_id=guild_id,
+            user_id=user_id,
+            channel_id=channel_id,
+            role="assistant",
+            content=reply,
+        )
+
+    return reply

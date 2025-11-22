@@ -133,6 +133,9 @@ async def on_message(message):
             user_message=content,
             username=message.author.display_name,
             guild_name=message.guild.name if message.guild else None,
+            guild_id=message.guild.id if message.guild else None,
+            user_id=message.author.id,
+            channel_id=message.channel.id,
         )
         if reply:
             await message.reply(reply)
