@@ -31,3 +31,10 @@ ENV/
 # IDEs
 .vscode/
 .idea/
+
+# Data storage
+data/
+
+
+
+

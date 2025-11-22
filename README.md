@@ -5,27 +5,38 @@ A discord bot with a dash of chutzpah! This bot features basic moderation, auto-
 ## Features
 
 - **Moderation**:
-  - `!ban [user] [reason]`: Bans a user ("Oy vey, you've been banned").
-  - `!kick [user] [reason]`: Kicks a user ("Yalla bye").
-  - `!clear [amount]`: Clears messages ("Cleaning up the balagan").
+  - `,ban [user] [reason]` (alias: `,b`): Bans a user ("Oy vey, you've been banned").
+  - `,kick [user] [reason]` (alias: `,k`): Kicks a user ("Yalla bye").
+  - `,clear [amount]` (aliases: `,c`, `,purge`): Clears messages ("Cleaning up the balagan").
+  - `,role [@user] [role_id/name]` (alias: `,r`): Toggle role on/off for a user.
 
-- **Auto Roles**: Automatically assigns a role by ID when a new user joins.
+- **Auto Roles**: 
+  - Automatically assigns "Unpolished" role when new users join.
+  - Grants "Gem" role (image perms) at 150 messages.
 
-- **Server Info**: `!info` command to show server stats.
+- **Leveling & Leaderboard**:
+  - `,rank [@user]` (aliases: `,level`, `,stats`): View user stats and level.
+  - `,leaderboard` (aliases: `,lb`, `,top`): Top 10 users by message count.
+  - 5 XP per message, 100 XP per level.
+
+- **Anti-Nuke Protection**: 
+  - Automatically deletes messages from users spamming >20 messages in 10 seconds.
+
+- **Server Info**: `,info` command to show server stats.
 
 - **Avatars & Banners**:
-  - `!avatar [@user]` (aliases: `!av`, `!pfp`): Shows user's avatar.
-  - `!banner [@user]`: Shows user's banner (if they have one).
-  - `!servericon` (alias: `!guildicon`): Shows server icon.
-  - `!serverbanner` (alias: `!guildbanner`): Shows server banner.
+  - `,avatar [@user]` (aliases: `,av`, `,pfp`): Shows user's avatar.
+  - `,banner [@user]`: Shows user's banner (if they have one).
+  - `,servericon` (alias: `,guildicon`): Shows server icon.
+  - `,serverbanner` (alias: `,guildbanner`): Shows server banner.
 
 - **Music Streaming** (yt-dlp powered):
-  - `!play [url/search]` (alias: `!p`): Play audio from YouTube or search.
-  - `!pause`: Pause current track.
-  - `!resume`: Resume playback.
-  - `!skip`: Skip current track.
-  - `!stop`: Stop playback and clear queue.
-  - `!leave` (aliases: `!disconnect`, `!dc`): Leave voice channel.
+  - `,play [url/search]` (alias: `,p`): Play audio from YouTube or search.
+  - `,pause`: Pause current track.
+  - `,resume`: Resume playback.
+  - `,skip`: Skip current track.
+  - `,stop`: Stop playback and clear queue.
+  - `,leave` (aliases: `,disconnect`, `,dc`): Leave voice channel.
 
 - **Events**:
   - Welcome message: "Shalom [user]!"
@@ -66,7 +77,7 @@ A discord bot with a dash of chutzpah! This bot features basic moderation, auto-
 
 5. **Run the bot**:
    ```bash
-   python bot.py
+   python src/bot.py
    ```
 
 ## Docker
