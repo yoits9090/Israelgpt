@@ -28,6 +28,7 @@ intents.members = True
 
 # Bot setup
 bot = commands.Bot(command_prefix=',', intents=intents)
+bot.remove_command("help")
 
 # Setup external systems (tickets, etc.)
 setup_ticket_system(bot)
@@ -55,11 +56,218 @@ def parse_duration(duration: str) -> timedelta | None:
     seconds = value * multipliers[unit]
     return timedelta(seconds=seconds)
 
+
+class HelpPaginator(discord.ui.View):
+    def __init__(self, ctx, pages: list[discord.Embed]):
+        super().__init__(timeout=180)
+        self.ctx = ctx
+        self.pages = pages
+        self.current_page = 0
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.ctx.author:
+            await interaction.response.send_message(
+                "Only the person who asked for help can use these buttons, chaver!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    def _update_footer(self) -> discord.Embed:
+        embed = self.pages[self.current_page]
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{len(self.pages)} • Use the buttons below to navigate"
+        )
+        return embed
+
+    async def update_message(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=self._update_footer(), view=self)
+
+    @discord.ui.button(label="⏮️ Back", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, _: discord.ui.Button):
+        self.current_page = (self.current_page - 1) % len(self.pages)
+        await self.update_message(interaction)
+
+    @discord.ui.button(label="🏠 Overview", style=discord.ButtonStyle.primary)
+    async def home_button(self, interaction: discord.Interaction, _: discord.ui.Button):
+        self.current_page = 0
+        await self.update_message(interaction)
+
+    @discord.ui.button(label="Next ⏭️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, _: discord.ui.Button):
+        self.current_page = (self.current_page + 1) % len(self.pages)
+        await self.update_message(interaction)
+
+
+def build_help_pages(prefix: str) -> list[discord.Embed]:
+
+    overview = discord.Embed(
+        title="IsraelGPT Command Guide",
+        description=(
+            "Interactive guide for every command. Navigate with the buttons to see detailed "
+            "usage, permissions, and examples."
+        ),
+        color=0x3498DB,
+    )
+    overview.add_field(
+        name="How to use",
+        value=(
+            f"Use `{prefix}command` with the arguments shown on each page. "
+            "Only the user who requested this help can flip through the pages."
+        ),
+        inline=False,
+    )
+    overview.add_field(
+        name="Need this guide again?",
+        value=f"Type `{prefix}help` anytime to reopen the navigator.",
+        inline=False,
+    )
+    overview.add_field(
+        name="Navigation tips",
+        value="⏮️ Back • 🏠 Overview • Next ⏭️",
+        inline=False,
+    )
+
+    moderation = discord.Embed(title="Moderation & Safety", color=0xE74C3C)
+    moderation.add_field(
+        name=f"{prefix}ban <user> [reason]",
+        value="Ban a member with an optional reason. Requires Ban Members permission.",
+        inline=False,
+    )
+    moderation.add_field(
+        name=f"{prefix}kick <user> [reason]",
+        value="Kick a member from the server. Requires Kick Members permission.",
+        inline=False,
+    )
+    moderation.add_field(
+        name=f"{prefix}mute <user> <duration>",
+        value=(
+            "Timeout a user for a duration like `10m`, `2h`, or `1d`. You can also reply "
+            "to a user's message instead of mentioning them."
+        ),
+        inline=False,
+    )
+    moderation.add_field(
+        name=f"{prefix}clear <amount>",
+        value="Bulk delete the given number of messages in the current channel.",
+        inline=False,
+    )
+    moderation.add_field(
+        name=f"{prefix}role <user> <role>",
+        value="Toggle a role for a user by name or ID. Requires Manage Roles permission.",
+        inline=False,
+    )
+    moderation.add_field(
+        name=f"{prefix}slowmode <seconds>",
+        value=(
+            "Set channel slowmode in seconds (use 0 to disable). Great for calming a chat "
+            "without full lockdown. Requires Manage Channels permission."
+        ),
+        inline=False,
+    )
+
+    community = discord.Embed(title="Community & Utility", color=0x2ECC71)
+    community.add_field(
+        name=f"{prefix}leaderboard",
+        value="Show the top 10 chatters by messages and level.",
+        inline=False,
+    )
+    community.add_field(
+        name=f"{prefix}rank [user]",
+        value="See your own or another member's message, XP, and level stats.",
+        inline=False,
+    )
+    community.add_field(
+        name=f"{prefix}info",
+        value="Server overview including member count and region.",
+        inline=False,
+    )
+    community.add_field(
+        name=f"{prefix}avatar [user] / {prefix}banner [user]",
+        value="Display avatars or banners for yourself or a mentioned user.",
+        inline=False,
+    )
+    community.add_field(
+        name=f"{prefix}servericon / {prefix}serverbanner",
+        value="Preview the guild's icon or banner if available.",
+        inline=False,
+    )
+    community.add_field(
+        name=f"{prefix}poll <question> | <option 1> | <option 2> ...",
+        value=(
+            "Create a quick reaction poll with up to 10 options. Separate options using `|` "
+            "and I'll add number emojis automatically."
+        ),
+        inline=False,
+    )
+    community.add_field(
+        name=f"{prefix}remind <duration> <message>",
+        value=(
+            "Set a reminder like `,remind 15m Drink water`. I'll ping you in this channel "
+            "when time's up."
+        ),
+        inline=False,
+    )
+
+    music = discord.Embed(title="Music & Media", color=0x9B59B6)
+    music.add_field(
+        name=f"{prefix}play <url/search>",
+        value="Join your voice channel and start playing audio from YouTube.",
+        inline=False,
+    )
+    music.add_field(
+        name=f"{prefix}pause / {prefix}resume",
+        value="Pause or resume the current track.",
+        inline=False,
+    )
+    music.add_field(
+        name=f"{prefix}skip",
+        value="Skip the current track and move to the next queued song if available.",
+        inline=False,
+    )
+    music.add_field(
+        name=f"{prefix}stop",
+        value="Stop playback and clear the queue for this server.",
+        inline=False,
+    )
+    music.add_field(
+        name=f"{prefix}leave",
+        value="Disconnect the bot from voice and clear the queue.",
+        inline=False,
+    )
+
+    ai = discord.Embed(title="AI & Tickets", color=0xF1C40F)
+    ai.add_field(
+        name="Mentioning IsraelGPT",
+        value=(
+            "Mention the bot to get a friendly AI reply tailored to your server. "
+            "Great for quick answers or conversation starters."
+        ),
+        inline=False,
+    )
+    ai.add_field(
+        name="Ticket system",
+        value=(
+            "Use the configured ticket panel to reach staff. Replies are routed through the "
+            "ticket tools once you set them up (see server setup)."
+        ),
+        inline=False,
+    )
+
+    return [overview, moderation, community, music, ai]
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has arrived! Shalom everyone!')
     await bot.change_presence(activity=discord.Game(name="Backgammon (Shesh Besh)"))
     register_ticket_view(bot)
+
+
+@bot.command(name='help')
+async def help_command(ctx):
+    pages = build_help_pages(ctx.clean_prefix)
+    view = HelpPaginator(ctx, pages)
+    await ctx.send(embed=view._update_footer(), view=view)
 
 @bot.event
 async def on_member_join(member):
@@ -265,6 +473,32 @@ async def toggle_role(ctx, member: discord.Member, *, role_input: str):
     except Exception as e:
         await ctx.send(f"Nu? Something went wrong: {e}")
 
+
+@bot.command(name='slowmode')
+@commands.has_permissions(manage_channels=True)
+async def slowmode(ctx, seconds: int | None = None):
+    if seconds is None:
+        await ctx.send(
+            f"Current slowmode is set to {ctx.channel.slowmode_delay} seconds. "
+            "Provide a number to update it (use 0 to disable)."
+        )
+        return
+
+    if seconds < 0 or seconds > 21600:
+        await ctx.send("Use a value between 0 seconds and 6 hours (21600 seconds).")
+        return
+
+    try:
+        await ctx.channel.edit(slowmode_delay=seconds)
+        if seconds == 0:
+            await ctx.send("Slowmode disabled. Keep it civil, chaverim!")
+        else:
+            await ctx.send(f"Slowmode updated to {seconds} seconds. Breathe and type slowly.")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to change slowmode here.")
+    except Exception as e:
+        await ctx.send(f"Couldn't adjust slowmode: {e}")
+
 # Leaderboard and Level Commands
 @bot.command(name='leaderboard', aliases=['lb', 'top'])
 async def leaderboard(ctx):
@@ -312,6 +546,54 @@ async def info(ctx):
     embed.add_field(name="Region", value="The Middle East (probably)", inline=True)
     embed.set_footer(text="Developed with chutzpah")
     await ctx.send(embed=embed)
+
+
+@bot.command(name='poll')
+async def poll(ctx, *, question_and_options: str | None = None):
+    if question_and_options is None:
+        await ctx.send("Provide a question and at least two options using `|` as a separator.")
+        return
+
+    segments = [segment.strip() for segment in question_and_options.split("|") if segment.strip()]
+    if len(segments) < 3:
+        await ctx.send("Format: `,poll What do we eat? | Pizza | Falafel | Sushi`")
+        return
+
+    question, options = segments[0], segments[1:]
+    if len(options) > 10:
+        await ctx.send("Easy there! Maximum of 10 options.")
+        return
+
+    emoji_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    embed = discord.Embed(title=f"📊 {question}", color=0x1ABC9C)
+    description_lines = [f"{emoji_numbers[i]} {option}" for i, option in enumerate(options)]
+    embed.description = "\n".join(description_lines)
+    embed.set_footer(text="React below to vote! Votes update live.")
+
+    message = await ctx.send(embed=embed)
+    for i in range(len(options)):
+        await message.add_reaction(emoji_numbers[i])
+
+
+@bot.command(name='remind', aliases=['reminder'])
+async def remind(ctx, duration: str | None = None, *, reminder: str | None = None):
+    if duration is None or reminder is None:
+        await ctx.send("Usage: `,remind <duration> <message>` e.g. `,remind 15m Drink water`")
+        return
+
+    parsed = parse_duration(duration.lower())
+    if parsed is None:
+        await ctx.send("I couldn't parse that time. Use values like 10m, 2h, or 1d.")
+        return
+
+    await ctx.send(f"Reminder set for {duration}. I'll ping you when time's up!")
+
+    await asyncio.sleep(parsed.total_seconds())
+
+    try:
+        await ctx.send(f"{ctx.author.mention} ⏰ Reminder: {reminder}")
+    except Exception as e:
+        print(f"Failed to send reminder: {e}")
 
 @bot.command(name='avatar', aliases=['av', 'pfp'])
 async def avatar(ctx, member: discord.Member = None):
