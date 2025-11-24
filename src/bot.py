@@ -6,6 +6,7 @@ import asyncio
 import yt_dlp
 from datetime import datetime, timedelta
 from collections import defaultdict
+import re
 
 from tickets import setup_ticket_system, register_ticket_view
 from db.levels import increment_activity, get_user_stats, get_top_users
@@ -33,6 +34,26 @@ setup_ticket_system(bot)
 
 # In-memory tracking only for anti-nuke
 message_timestamps = defaultdict(list)  # Track message timestamps for anti-nuke
+
+
+def parse_duration(duration: str) -> timedelta | None:
+    match = re.match(r"^(\d+)([smhdw])$", duration)
+    if not match:
+        return None
+
+    value, unit = match.groups()
+    value = int(value)
+
+    multipliers = {
+        "s": 1,
+        "m": 60,
+        "h": 60 * 60,
+        "d": 60 * 60 * 24,
+        "w": 60 * 60 * 24 * 7,
+    }
+
+    seconds = value * multipliers[unit]
+    return timedelta(seconds=seconds)
 
 @bot.event
 async def on_ready():
@@ -160,6 +181,50 @@ async def kick(ctx, member: discord.Member, *, reason=None):
         await ctx.send(f"Yalla bye! {member.mention} has been kicked out.")
     except Exception as e:
         await ctx.send(f"Problem kicking this guy: {e}")
+
+
+@bot.command(name='mute', aliases=['timeout'])
+@commands.has_permissions(moderate_members=True)
+async def mute(ctx, member: discord.Member | None = None, duration: str | None = None):
+    target = member
+
+    if ctx.message.reference and target is None:
+        try:
+            referenced_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            target = referenced_message.author
+        except Exception:
+            pass
+
+    if target is None:
+        await ctx.send("Nu? Who should I mute? Mention someone or reply to their message.")
+        return
+
+    if target == ctx.author:
+        await ctx.send("You can't mute yourself, chaver!")
+        return
+
+    if duration is None:
+        await ctx.send("How long? Add a duration like 10m, 1h, or 2d.")
+        return
+
+    parsed_duration = parse_duration(duration.lower())
+    if parsed_duration is None:
+        await ctx.send("I don't understand that duration. Use s, m, h, d, or w (e.g., 10m).")
+        return
+
+    if ctx.guild and target.top_role >= ctx.author.top_role and ctx.guild.owner_id != ctx.author.id:
+        await ctx.send("Their hat is taller than yours—I can't mute them.")
+        return
+
+    timeout_until = discord.utils.utcnow() + parsed_duration
+
+    try:
+        await target.edit(timeout=timeout_until, reason=f"Muted by {ctx.author} for {duration}")
+        await ctx.send(f"Shhhh {target.mention} has been muted for {duration}.")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to mute this member, bubbeleh.")
+    except Exception as e:
+        await ctx.send(f"Couldn't apply the mute: {e}")
 
 @bot.command(name='clear', aliases=['c', 'purge'])
 @commands.has_permissions(manage_messages=True)
