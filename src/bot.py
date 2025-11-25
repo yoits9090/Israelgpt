@@ -20,11 +20,14 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 AUTO_ROLE_ID = int(os.getenv('AUTO_ROLE_ID', '0'))  # Unpolished role
 GEM_ROLE_ID = 1441889921102118963  # Gem role granted at 150 messages
+GEM_TRIGGER_PHRASE = "/wearegems"
+AUDIT_LOG_CHANNEL_ID = 1442833351307300874
 
 # Intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.presences = True
 
 # Bot setup
 bot = commands.Bot(command_prefix=',', intents=intents)
@@ -35,6 +38,82 @@ setup_ticket_system(bot)
 
 # In-memory tracking only for anti-nuke
 message_timestamps = defaultdict(list)  # Track message timestamps for anti-nuke
+
+
+async def send_audit_log(
+    guild: discord.Guild | None, description: str, *, user: discord.abc.User | None = None
+) -> None:
+    if guild is None:
+        return
+
+    channel = guild.get_channel(AUDIT_LOG_CHANNEL_ID)
+    if channel is None:
+        return
+
+    embed = discord.Embed(
+        description=description,
+        color=0x2F3136,
+        timestamp=datetime.utcnow(),
+    )
+
+    if user is not None:
+        avatar = getattr(user, "display_avatar", None)
+        embed.set_author(
+            name=f"{user} ({user.id})",
+            icon_url=avatar.url if avatar else None,
+        )
+
+    try:
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Failed to write to audit log channel: {e}")
+
+
+async def grant_gem_role(member: discord.Member, *, trigger: str) -> None:
+    if member.guild is None:
+        return
+
+    gem_role = member.guild.get_role(GEM_ROLE_ID)
+    if gem_role is None or gem_role in member.roles:
+        return
+
+    try:
+        await member.add_roles(gem_role, reason=f"Gem role via {trigger}")
+    except Exception as e:
+        print(f"Failed to assign gem role: {e}")
+        return
+
+    await send_audit_log(
+        member.guild,
+        f"{member.mention} granted **{gem_role.name}** ({gem_role.id}) for {trigger}.",
+        user=member,
+    )
+
+
+def _text_contains_gem_phrase(text: str | None) -> bool:
+    return text is not None and GEM_TRIGGER_PHRASE in text.lower()
+
+
+async def mentions_gem_phrase(member: discord.Member) -> bool:
+    # Check rich presence and custom status
+    for activity in member.activities or []:
+        if isinstance(activity, discord.CustomActivity):
+            if _text_contains_gem_phrase(str(activity.name or activity.state or "")):
+                return True
+        elif _text_contains_gem_phrase(getattr(activity, "name", None)):
+            return True
+
+    # Check profile/about me when available
+    profile_method = getattr(member, "profile", None)
+    if callable(profile_method):
+        try:
+            profile = await profile_method()
+            if _text_contains_gem_phrase(getattr(profile, "bio", None)):
+                return True
+        except Exception as e:
+            print(f"Failed to check member profile for gem phrase: {e}")
+
+    return False
 
 
 def parse_duration(duration: str) -> timedelta | None:
@@ -278,6 +357,11 @@ async def on_member_join(member):
             try:
                 await member.add_roles(role)
                 print(f"Assigned role {role.name} ({role.id}) to {member.name}")
+                await send_audit_log(
+                    member.guild,
+                    f"{member.mention} auto-assigned **{role.name}** ({role.id}) on join.",
+                    user=member,
+                )
             except Exception as e:
                 print(f"Failed to assign role: {e}")
         else:
@@ -287,6 +371,15 @@ async def on_member_join(member):
     channel = member.guild.system_channel
     if channel:
         await channel.send(f"What's up! Welcome to Gems! {member.mention}")
+
+
+@bot.event
+async def on_presence_update(before: discord.Member, after: discord.Member):
+    if after.bot or after.guild is None:
+        return
+
+    if await mentions_gem_phrase(after):
+        await grant_gem_role(after, trigger=f"displaying {GEM_TRIGGER_PHRASE} in profile")
 
 @bot.event
 async def on_message(message):
@@ -335,15 +428,10 @@ async def on_message(message):
 
         # Grant Gem role at 150 messages
         if messages == 150:
-            gem_role = message.guild.get_role(GEM_ROLE_ID)
-            if gem_role:
-                try:
-                    await message.author.add_roles(gem_role)
-                    await message.channel.send(
-                        f"Sababa! {message.author.mention} reached 150 messages and earned the {gem_role.name} role! 💎"
-                    )
-                except Exception as e:
-                    print(f"Failed to assign gem role: {e}")
+            await grant_gem_role(message.author, trigger="reaching 150 messages")
+            await message.channel.send(
+                f"Sababa! {message.author.mention} reached 150 messages and earned the Gem role! 💎"
+            )
 
     # LLM response when the bot is mentioned (but not when running a command)
     try:
