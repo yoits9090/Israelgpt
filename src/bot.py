@@ -7,6 +7,7 @@ import yt_dlp
 from datetime import datetime, timedelta
 from collections import defaultdict
 import re
+from typing import Dict, Optional
 
 from tickets import setup_ticket_system, register_ticket_view
 from db.levels import increment_activity, get_user_stats, get_top_users
@@ -23,6 +24,8 @@ AUTO_ROLE_ID = int(os.getenv('AUTO_ROLE_ID', '0'))  # Unpolished role
 GEM_ROLE_ID = 1441889921102118963  # Gem role granted at 150 messages
 GEM_TRIGGER_PHRASE = "/wearegems"
 AUDIT_LOG_CHANNEL_ID = 1442833351307300874
+VOICE_CHANNEL_IDS = {1441899961225576458, 1441877144413278228}
+VOICE_TRANSCRIBE_INTERVAL = 5
 
 # Intents
 intents = discord.Intents.default()
@@ -39,6 +42,210 @@ setup_ticket_system(bot)
 
 # In-memory tracking only for anti-nuke
 message_timestamps = defaultdict(list)  # Track message timestamps for anti-nuke
+voice_monitors: Dict[int, "VoiceMonitor"] = {}
+
+
+def _truncate(text: str, limit: int = 1700) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+class VoiceMonitor:
+    def __init__(self, channel: discord.VoiceChannel):
+        self.channel = channel
+        self.voice_client: Optional[discord.VoiceClient] = None
+        self.task: Optional[asyncio.Task] = None
+        self._running = False
+        self._warned_unavailable = False
+
+    async def ensure_running(self):
+        await self._connect()
+        if not self._running:
+            self._running = True
+            self.task = bot.loop.create_task(self._transcription_loop())
+
+    async def _connect(self):
+        guild = self.channel.guild
+        if guild is None:
+            return
+
+        client = guild.voice_client
+        if client is None:
+            try:
+                client = await self.channel.connect()
+            except Exception as e:
+                print(f"Failed to join voice channel {self.channel.id}: {e}")
+                return
+        elif client.channel != self.channel:
+            try:
+                await client.move_to(self.channel)
+            except Exception as e:
+                print(f"Failed to move to monitored channel {self.channel.id}: {e}")
+                return
+
+        self.voice_client = client
+
+    async def _capture_audio_chunk(self) -> Optional[bytes]:
+        if self.voice_client is None:
+            return None
+
+        # discord.py (2.6.x) does not provide voice receive primitives; store participant snapshots.
+        if not self._warned_unavailable:
+            print(
+                "Voice receive is unavailable in discord.py; capturing participant snapshot without audio."
+            )
+            self._warned_unavailable = True
+        return None
+
+    async def _transcription_loop(self):
+        while self._running:
+            start_time = datetime.utcnow()
+            participants = [m.id for m in self.channel.members if not m.bot]
+
+            transcript: Optional[str] = None
+            note: Optional[str] = None
+
+            audio_bytes = await self._capture_audio_chunk()
+            if audio_bytes:
+                transcript = await transcribe_audio_bytes(audio_bytes)
+                if not transcript:
+                    note = "Transcription returned empty text."
+            else:
+                note = "Audio capture not available; stored participant snapshot only."
+
+            try:
+                record_segment(
+                    guild_id=self.channel.guild.id if self.channel.guild else 0,
+                    channel_id=self.channel.id,
+                    participants=participants,
+                    transcript=transcript,
+                    note=note,
+                    started_at=start_time,
+                    ended_at=datetime.utcnow(),
+                )
+            except Exception as e:
+                print(f"Failed to write voice segment: {e}")
+
+            await asyncio.sleep(VOICE_TRANSCRIBE_INTERVAL)
+
+    async def stop(self):
+        self._running = False
+        if self.task:
+            self.task.cancel()
+        if self.voice_client and self.voice_client.is_connected():
+            if self.voice_client.is_playing():
+                return
+            try:
+                await self.voice_client.disconnect()
+            except Exception as e:
+                print(f"Failed to disconnect monitor client: {e}")
+
+
+async def _ensure_voice_monitor(channel: discord.VoiceChannel):
+    monitor = voice_monitors.get(channel.id)
+    if monitor is None:
+        monitor = VoiceMonitor(channel)
+        voice_monitors[channel.id] = monitor
+    else:
+        monitor.channel = channel
+
+    await monitor.ensure_running()
+
+
+async def _stop_monitor_if_empty(channel: discord.VoiceChannel):
+    monitor = voice_monitors.get(channel.id)
+    if monitor is None:
+        return
+
+    non_bot_members = [m for m in channel.members if not m.bot]
+    if non_bot_members:
+        return
+
+    await monitor.stop()
+    voice_monitors.pop(channel.id, None)
+
+
+async def _find_message_deleter(message: discord.Message) -> discord.abc.User | None:
+    if message.guild is None or message.guild.me is None:
+        return None
+
+    me_permissions = message.guild.me.guild_permissions
+    if not me_permissions.view_audit_log:
+        return None
+
+    try:
+        async for entry in message.guild.audit_logs(
+            limit=5, action=discord.AuditLogAction.message_delete
+        ):
+            if entry.target.id != getattr(message.author, "id", None):
+                continue
+
+            extra_channel = getattr(entry.extra, "channel", None)
+            if extra_channel is not None and extra_channel.id != message.channel.id:
+                continue
+
+            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
+                continue
+
+            return entry.user
+    except Exception as e:
+        print(f"Failed to inspect audit log for deletions: {e}")
+
+    return None
+
+
+async def _send_flagged_message_report(
+    message: discord.Message, verdict: dict[str, object]
+) -> None:
+    if message.guild is None:
+        return
+
+    channel = message.guild.get_channel(AUDIT_LOG_CHANNEL_ID)
+    if channel is None:
+        return
+
+    categories = verdict.get("categories") or []
+    details = verdict.get("details") or "Flagged by safety model."
+    verdict_label = str(verdict.get("verdict", "unknown")).title()
+
+    description = (
+        f"Message flagged by Llama Guard in {message.channel.mention}.\n"
+        f"Author: {message.author.mention} ({message.author.id})\n"
+        f"Verdict: {verdict_label}\n"
+        f"Categories: {', '.join(categories) if categories else 'n/a'}\n"
+        f"Details: {details}"
+    )
+
+    content = message.content or "[no text content]"
+    embed = discord.Embed(
+        description=description,
+        color=0xE74C3C,
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(
+        name="Message Content",
+        value=f"```{_truncate(content, 900)}```",
+        inline=False,
+    )
+    embed.set_footer(text=f"Message ID: {message.id}")
+
+    try:
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Failed to send flagged message report: {e}")
+
+
+async def _scan_message_safety(message: discord.Message) -> None:
+    if not message.content:
+        return
+
+    verdict = await classify_message_safety(message.content)
+    if verdict is None:
+        return
+
+    if str(verdict.get("verdict", "safe")).lower() != "safe":
+        await _send_flagged_message_report(message, verdict)
 
 
 def _truncate(text: str, limit: int = 1700) -> str:
@@ -469,6 +676,22 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
 
     if await mentions_gem_phrase(after):
         await grant_gem_role(after, trigger=f"displaying {GEM_TRIGGER_PHRASE} in profile")
+
+
+@bot.event
+async def on_voice_state_update(member: discord.Member, before, after):
+    before_channel = before.channel if before else None
+    after_channel = after.channel if after else None
+
+    if after_channel and after_channel.id in VOICE_CHANNEL_IDS and not member.bot:
+        await _ensure_voice_monitor(after_channel)
+
+    if (
+        before_channel
+        and before_channel.id in VOICE_CHANNEL_IDS
+        and (after_channel is None or after_channel.id != before_channel.id)
+    ):
+        await _stop_monitor_if_empty(before_channel)
 
 @bot.event
 async def on_message(message):

@@ -25,6 +25,24 @@ def _get_client() -> Optional[Groq]:
     return _client
 
 
+def _transcribe_bytes(data: bytes, *, model: str = "whisper-large-v3-turbo") -> Optional[str]:
+    client = _get_client()
+    if client is None:
+        return None
+
+    try:
+        transcription = client.audio.transcriptions.create(
+            file=("audio.wav", data),
+            model=model,
+        )
+        if transcription and getattr(transcription, "text", None):
+            return transcription.text
+    except Exception as e:
+        print(f"Groq transcription error: {e}")
+
+    return None
+
+
 def _call_groq_sync(messages: list[Dict[str, str]]) -> Optional[str]:
     client = _get_client()
     if client is None:
