@@ -12,13 +12,8 @@ from typing import Dict, Optional
 from tickets import setup_ticket_system, register_ticket_view
 from db.levels import increment_activity, get_user_stats, get_top_users
 from db.users import record_message
-from db.audit import (
-    log_message as log_audit_message,
-    get_message as get_logged_message,
-    record_deletion,
-)
-from db.voice_logs import record_segment
-from llm_client import generate_israeli_reply, classify_message_safety, transcribe_audio_bytes
+from db.audit import log_message as log_audit_message, get_message as get_logged_message, record_deletion
+from llm_client import generate_israeli_reply, classify_message_safety
 
 # Load environment variables
 load_dotenv()
@@ -169,6 +164,94 @@ async def _stop_monitor_if_empty(channel: discord.VoiceChannel):
 
     await monitor.stop()
     voice_monitors.pop(channel.id, None)
+
+
+async def _find_message_deleter(message: discord.Message) -> discord.abc.User | None:
+    if message.guild is None or message.guild.me is None:
+        return None
+
+    me_permissions = message.guild.me.guild_permissions
+    if not me_permissions.view_audit_log:
+        return None
+
+    try:
+        async for entry in message.guild.audit_logs(
+            limit=5, action=discord.AuditLogAction.message_delete
+        ):
+            if entry.target.id != getattr(message.author, "id", None):
+                continue
+
+            extra_channel = getattr(entry.extra, "channel", None)
+            if extra_channel is not None and extra_channel.id != message.channel.id:
+                continue
+
+            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
+                continue
+
+            return entry.user
+    except Exception as e:
+        print(f"Failed to inspect audit log for deletions: {e}")
+
+    return None
+
+
+async def _send_flagged_message_report(
+    message: discord.Message, verdict: dict[str, object]
+) -> None:
+    if message.guild is None:
+        return
+
+    channel = message.guild.get_channel(AUDIT_LOG_CHANNEL_ID)
+    if channel is None:
+        return
+
+    categories = verdict.get("categories") or []
+    details = verdict.get("details") or "Flagged by safety model."
+    verdict_label = str(verdict.get("verdict", "unknown")).title()
+
+    description = (
+        f"Message flagged by Llama Guard in {message.channel.mention}.\n"
+        f"Author: {message.author.mention} ({message.author.id})\n"
+        f"Verdict: {verdict_label}\n"
+        f"Categories: {', '.join(categories) if categories else 'n/a'}\n"
+        f"Details: {details}"
+    )
+
+    content = message.content or "[no text content]"
+    embed = discord.Embed(
+        description=description,
+        color=0xE74C3C,
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(
+        name="Message Content",
+        value=f"```{_truncate(content, 900)}```",
+        inline=False,
+    )
+    embed.set_footer(text=f"Message ID: {message.id}")
+
+    try:
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Failed to send flagged message report: {e}")
+
+
+async def _scan_message_safety(message: discord.Message) -> None:
+    if not message.content:
+        return
+
+    verdict = await classify_message_safety(message.content)
+    if verdict is None:
+        return
+
+    if str(verdict.get("verdict", "safe")).lower() != "safe":
+        await _send_flagged_message_report(message, verdict)
+
+
+def _truncate(text: str, limit: int = 1700) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 async def _find_message_deleter(message: discord.Message) -> discord.abc.User | None:

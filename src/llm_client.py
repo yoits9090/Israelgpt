@@ -118,10 +118,6 @@ async def classify_message_safety(content: str) -> Optional[Dict[str, Any]]:
     return await asyncio.to_thread(_call_guard_sync, content)
 
 
-async def transcribe_audio_bytes(data: bytes) -> Optional[str]:
-    return await asyncio.to_thread(_transcribe_bytes, data)
-
-
 async def generate_israeli_reply(
     user_message: str,
     username: str,
