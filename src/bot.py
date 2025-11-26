@@ -11,7 +11,8 @@ import re
 from tickets import setup_ticket_system, register_ticket_view
 from db.levels import increment_activity, get_user_stats, get_top_users
 from db.users import record_message
-from llm_client import generate_israeli_reply
+from db.audit import log_message as log_audit_message, get_message as get_logged_message, record_deletion
+from llm_client import generate_israeli_reply, classify_message_safety
 
 # Load environment variables
 load_dotenv()
@@ -38,6 +39,94 @@ setup_ticket_system(bot)
 
 # In-memory tracking only for anti-nuke
 message_timestamps = defaultdict(list)  # Track message timestamps for anti-nuke
+
+
+def _truncate(text: str, limit: int = 1700) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+async def _find_message_deleter(message: discord.Message) -> discord.abc.User | None:
+    if message.guild is None or message.guild.me is None:
+        return None
+
+    me_permissions = message.guild.me.guild_permissions
+    if not me_permissions.view_audit_log:
+        return None
+
+    try:
+        async for entry in message.guild.audit_logs(
+            limit=5, action=discord.AuditLogAction.message_delete
+        ):
+            if entry.target.id != getattr(message.author, "id", None):
+                continue
+
+            extra_channel = getattr(entry.extra, "channel", None)
+            if extra_channel is not None and extra_channel.id != message.channel.id:
+                continue
+
+            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
+                continue
+
+            return entry.user
+    except Exception as e:
+        print(f"Failed to inspect audit log for deletions: {e}")
+
+    return None
+
+
+async def _send_flagged_message_report(
+    message: discord.Message, verdict: dict[str, object]
+) -> None:
+    if message.guild is None:
+        return
+
+    channel = message.guild.get_channel(AUDIT_LOG_CHANNEL_ID)
+    if channel is None:
+        return
+
+    categories = verdict.get("categories") or []
+    details = verdict.get("details") or "Flagged by safety model."
+    verdict_label = str(verdict.get("verdict", "unknown")).title()
+
+    description = (
+        f"Message flagged by Llama Guard in {message.channel.mention}.\n"
+        f"Author: {message.author.mention} ({message.author.id})\n"
+        f"Verdict: {verdict_label}\n"
+        f"Categories: {', '.join(categories) if categories else 'n/a'}\n"
+        f"Details: {details}"
+    )
+
+    content = message.content or "[no text content]"
+    embed = discord.Embed(
+        description=description,
+        color=0xE74C3C,
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(
+        name="Message Content",
+        value=f"```{_truncate(content, 900)}```",
+        inline=False,
+    )
+    embed.set_footer(text=f"Message ID: {message.id}")
+
+    try:
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Failed to send flagged message report: {e}")
+
+
+async def _scan_message_safety(message: discord.Message) -> None:
+    if not message.content:
+        return
+
+    verdict = await classify_message_safety(message.content)
+    if verdict is None:
+        return
+
+    if str(verdict.get("verdict", "safe")).lower() != "safe":
+        await _send_flagged_message_report(message, verdict)
 
 
 async def send_audit_log(
@@ -386,6 +475,16 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    if message.guild is not None:
+        log_audit_message(
+            message_id=message.id,
+            guild_id=message.guild.id,
+            channel_id=message.channel.id,
+            author_id=message.author.id,
+            content=message.content or "",
+            created_at=message.created_at,
+        )
+
     # Anti-nuke detection
     user_id = message.author.id
     now = datetime.now()
@@ -411,6 +510,9 @@ async def on_message(message):
             pass
         await bot.process_commands(message)
         return
+
+    if message.guild is not None:
+        bot.loop.create_task(_scan_message_safety(message))
     # Track messages for leaderboard, leveling, and user activity
     if message.guild is not None:
         record_message(message.guild.id, user_id, now)
@@ -458,6 +560,54 @@ async def on_message(message):
             await message.reply(reply)
 
     await bot.process_commands(message)
+
+
+@bot.event
+async def on_message_delete(message: discord.Message):
+    if message.author and message.author.bot:
+        return
+
+    logged = get_logged_message(message.id)
+    content = message.content or (logged["content"] if logged else "")
+    author_id = getattr(message.author, "id", None) or (logged["author_id"] if logged else None)
+    created_at = logged["created_at"] if logged else None
+
+    deleter = await _find_message_deleter(message)
+    deleter_id = getattr(deleter, "id", None)
+
+    if message.guild is not None:
+        record_deletion(
+            message_id=message.id,
+            guild_id=message.guild.id,
+            channel_id=message.channel.id if message.channel else None,
+            author_id=author_id,
+            deleter_id=deleter_id,
+            content=content,
+            created_at=created_at,
+        )
+
+        deleter_label = (
+            f"{deleter.mention} ({deleter.id})" if deleter is not None else "Unknown"
+        )
+        author_label = (
+            f"{message.author.mention} ({message.author.id})"
+            if message.author is not None
+            else str(author_id)
+        )
+
+        description = (
+            f"Message deleted in {message.channel.mention if message.channel else '#unknown'}.\n"
+            f"Author: {author_label}\n"
+            f"Deleted by: {deleter_label}\n"
+            f"Message ID: {message.id}"
+        )
+
+        content_block = _truncate(content or "[no content captured]", 1500)
+        await send_audit_log(
+            message.guild,
+            description + f"\nContent:\n```{content_block}```",
+            user=message.author,
+        )
 
 # Moderation Commands
 @bot.command(name='ban', aliases=['b'])
