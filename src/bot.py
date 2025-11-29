@@ -5,14 +5,17 @@ from dotenv import load_dotenv
 import asyncio
 import yt_dlp
 from datetime import datetime, timedelta
-from collections import defaultdict
+from collections import defaultdict, deque
 import re
+from dataclasses import dataclass, asdict
 from typing import Dict, Optional
+import random
 
 from tickets import setup_ticket_system, register_ticket_view
 from db.levels import increment_activity, get_user_stats, get_top_users
 from db.users import record_message
 from db.audit import log_message as log_audit_message, get_message as get_logged_message, record_deletion
+from db.guild_config import load_all_guild_settings, save_guild_settings
 from llm_client import generate_israeli_reply, classify_message_safety
 
 # Load environment variables
@@ -24,8 +27,10 @@ AUTO_ROLE_ID = int(os.getenv('AUTO_ROLE_ID', '0'))  # Unpolished role
 GEM_ROLE_ID = 1441889921102118963  # Gem role granted at 150 messages
 GEM_TRIGGER_PHRASE = "/wearegems"
 AUDIT_LOG_CHANNEL_ID = 1442833351307300874
-VOICE_CHANNEL_IDS = {1441899961225576458, 1441877144413278228}
+DEFAULT_VOICE_CHANNEL_IDS = {1441899961225576458, 1441877144413278228}
+DEFAULT_PRIVATE_VOICE_LOBBY_ID = 1444420249264066591
 VOICE_TRANSCRIBE_INTERVAL = 5
+PRIMARY_GUILD_ID = int(os.getenv("PRIMARY_GUILD_ID", "0"))
 
 # Intents
 intents = discord.Intents.default()
@@ -43,6 +48,11 @@ setup_ticket_system(bot)
 # In-memory tracking only for anti-nuke
 message_timestamps = defaultdict(list)  # Track message timestamps for anti-nuke
 voice_monitors: Dict[int, "VoiceMonitor"] = {}
+private_voice_by_owner: Dict[int, "PrivateVoiceSession"] = {}
+private_voice_by_channel: Dict[int, int] = {}
+guild_settings: Dict[int, "GuildSettings"] = {}
+chat_activity: Dict[int, deque[tuple[datetime, int]]] = defaultdict(deque)
+chat_activity_cooldowns: Dict[int, datetime] = {}
 
 
 def _truncate(text: str, limit: int = 1700) -> str:
@@ -195,101 +205,324 @@ async def _find_message_deleter(message: discord.Message) -> discord.abc.User | 
     return None
 
 
-async def _send_flagged_message_report(
-    message: discord.Message, verdict: dict[str, object]
-) -> None:
-    if message.guild is None:
-        return
+@dataclass
+class PrivateVoiceSession:
+    owner_id: int
+    channel_id: int
+    role_id: int
 
-    channel = message.guild.get_channel(AUDIT_LOG_CHANNEL_ID)
-    if channel is None:
-        return
 
-    categories = verdict.get("categories") or []
-    details = verdict.get("details") or "Flagged by safety model."
-    verdict_label = str(verdict.get("verdict", "unknown")).title()
+@dataclass
+class GuildSettings:
+    auto_role_id: int | None = None
+    gem_role_id: int | None = None
+    gem_trigger_phrase: str = GEM_TRIGGER_PHRASE
+    audit_log_channel_id: int | None = None
+    voice_channel_ids: set[int] | None = None
+    private_voice_lobby_id: int | None = None
 
-    description = (
-        f"Message flagged by Llama Guard in {message.channel.mention}.\n"
-        f"Author: {message.author.mention} ({message.author.id})\n"
-        f"Verdict: {verdict_label}\n"
-        f"Categories: {', '.join(categories) if categories else 'n/a'}\n"
-        f"Details: {details}"
-    )
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "GuildSettings":
+        voice_channels = data.get("voice_channel_ids") or []
+        return cls(
+            auto_role_id=int(data.get("auto_role_id")) if data.get("auto_role_id") else None,
+            gem_role_id=int(data.get("gem_role_id")) if data.get("gem_role_id") else None,
+            gem_trigger_phrase=data.get("gem_trigger_phrase", GEM_TRIGGER_PHRASE),
+            audit_log_channel_id=int(data.get("audit_log_channel_id"))
+            if data.get("audit_log_channel_id")
+            else None,
+            voice_channel_ids={int(v) for v in voice_channels} if voice_channels else None,
+            private_voice_lobby_id=int(data.get("private_voice_lobby_id"))
+            if data.get("private_voice_lobby_id")
+            else None,
+        )
 
-    content = message.content or "[no text content]"
-    embed = discord.Embed(
-        description=description,
-        color=0xE74C3C,
-        timestamp=datetime.utcnow(),
-    )
-    embed.add_field(
-        name="Message Content",
-        value=f"```{_truncate(content, 900)}```",
-        inline=False,
-    )
-    embed.set_footer(text=f"Message ID: {message.id}")
+    def to_dict(self) -> dict[str, object]:
+        payload = asdict(self)
+        payload["voice_channel_ids"] = (
+            list(self.voice_channel_ids) if self.voice_channel_ids is not None else None
+        )
+        return payload
 
+
+def load_guild_configs():
     try:
-        await channel.send(embed=embed)
+        stored_configs = load_all_guild_settings()
     except Exception as e:
-        print(f"Failed to send flagged message report: {e}")
-
-
-async def _scan_message_safety(message: discord.Message) -> None:
-    if not message.content:
+        print(f"Failed to load guild configs: {e}")
         return
 
-    verdict = await classify_message_safety(message.content)
-    if verdict is None:
-        return
-
-    if str(verdict.get("verdict", "safe")).lower() != "safe":
-        await _send_flagged_message_report(message, verdict)
-
-
-def _truncate(text: str, limit: int = 1700) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
+    for key, value in stored_configs.items():
+        try:
+            guild_settings[int(key)] = GuildSettings.from_dict(value)
+        except Exception as e:
+            print(f"Skipping invalid guild config for {key}: {e}")
 
 
-async def _find_message_deleter(message: discord.Message) -> discord.abc.User | None:
-    if message.guild is None or message.guild.me is None:
-        return None
-
-    me_permissions = message.guild.me.guild_permissions
-    if not me_permissions.view_audit_log:
-        return None
-
+def save_guild_config(guild_id: int, settings: "GuildSettings"):
     try:
-        async for entry in message.guild.audit_logs(
-            limit=5, action=discord.AuditLogAction.message_delete
-        ):
-            if entry.target.id != getattr(message.author, "id", None):
-                continue
-
-            extra_channel = getattr(entry.extra, "channel", None)
-            if extra_channel is not None and extra_channel.id != message.channel.id:
-                continue
-
-            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
-                continue
-
-            return entry.user
+        save_guild_settings(
+            guild_id,
+            auto_role_id=settings.auto_role_id,
+            gem_role_id=settings.gem_role_id,
+            gem_trigger_phrase=settings.gem_trigger_phrase,
+            audit_log_channel_id=settings.audit_log_channel_id,
+            voice_channel_ids=settings.voice_channel_ids,
+            private_voice_lobby_id=settings.private_voice_lobby_id,
+        )
     except Exception as e:
-        print(f"Failed to inspect audit log for deletions: {e}")
+        print(f"Failed to persist guild settings for {guild_id}: {e}")
 
+
+def get_guild_settings(guild_id: int | None) -> GuildSettings:
+    if guild_id is None:
+        return GuildSettings()
+
+    base_settings = GuildSettings()
+    if PRIMARY_GUILD_ID == 0 or guild_id == PRIMARY_GUILD_ID:
+        base_settings = GuildSettings(
+            auto_role_id=AUTO_ROLE_ID or None,
+            gem_role_id=GEM_ROLE_ID or None,
+            gem_trigger_phrase=GEM_TRIGGER_PHRASE,
+            audit_log_channel_id=AUDIT_LOG_CHANNEL_ID or None,
+            voice_channel_ids=set(DEFAULT_VOICE_CHANNEL_IDS),
+            private_voice_lobby_id=DEFAULT_PRIVATE_VOICE_LOBBY_ID or None,
+        )
+
+    overrides = guild_settings.get(guild_id)
+    if overrides is None:
+        return base_settings
+
+    return GuildSettings(
+        auto_role_id=overrides.auto_role_id
+        if overrides.auto_role_id is not None
+        else base_settings.auto_role_id,
+        gem_role_id=overrides.gem_role_id
+        if overrides.gem_role_id is not None
+        else base_settings.gem_role_id,
+        gem_trigger_phrase=overrides.gem_trigger_phrase or base_settings.gem_trigger_phrase,
+        audit_log_channel_id=overrides.audit_log_channel_id
+        if overrides.audit_log_channel_id is not None
+        else base_settings.audit_log_channel_id,
+        voice_channel_ids=overrides.voice_channel_ids
+        if overrides.voice_channel_ids is not None
+        else base_settings.voice_channel_ids,
+        private_voice_lobby_id=overrides.private_voice_lobby_id
+        if overrides.private_voice_lobby_id is not None
+        else base_settings.private_voice_lobby_id,
+    )
+
+
+load_guild_configs()
+
+
+def get_auto_role_id(guild: discord.Guild | None) -> int | None:
+    settings = get_guild_settings(guild.id if guild else None)
+    return settings.auto_role_id
+
+
+def get_gem_role_id(guild: discord.Guild | None) -> int | None:
+    settings = get_guild_settings(guild.id if guild else None)
+    return settings.gem_role_id
+
+
+def get_gem_trigger_phrase(guild: discord.Guild | None) -> str:
+    settings = get_guild_settings(guild.id if guild else None)
+    return settings.gem_trigger_phrase or GEM_TRIGGER_PHRASE
+
+
+def get_audit_log_channel_id(guild: discord.Guild | None) -> int | None:
+    settings = get_guild_settings(guild.id if guild else None)
+    return settings.audit_log_channel_id
+
+
+def get_voice_channel_ids(guild: discord.Guild | None) -> set[int]:
+    settings = get_guild_settings(guild.id if guild else None)
+    if settings.voice_channel_ids is not None:
+        return set(settings.voice_channel_ids)
+    if guild and PRIMARY_GUILD_ID and guild.id == PRIMARY_GUILD_ID:
+        return set(DEFAULT_VOICE_CHANNEL_IDS)
+    return set()
+
+
+def get_private_voice_lobby_id(guild: discord.Guild | None) -> int | None:
+    settings = get_guild_settings(guild.id if guild else None)
+    if settings.private_voice_lobby_id is not None:
+        return settings.private_voice_lobby_id
+    if guild and PRIMARY_GUILD_ID and guild.id == PRIMARY_GUILD_ID:
+        return DEFAULT_PRIVATE_VOICE_LOBBY_ID
     return None
 
 
+def _register_private_voice_session(session: PrivateVoiceSession):
+    private_voice_by_owner[session.owner_id] = session
+    private_voice_by_channel[session.channel_id] = session.owner_id
+
+
+def _unregister_private_voice_session(owner_id: int):
+    session = private_voice_by_owner.pop(owner_id, None)
+    if session:
+        private_voice_by_channel.pop(session.channel_id, None)
+
+
+def _get_private_session_by_channel(channel_id: int) -> Optional[PrivateVoiceSession]:
+    owner_id = private_voice_by_channel.get(channel_id)
+    if owner_id is None:
+        return None
+    return private_voice_by_owner.get(owner_id)
+
+
+async def _ensure_private_voice(member: discord.Member, lobby_channel: discord.VoiceChannel):
+    if member.guild is None:
+        return
+
+    existing_session = private_voice_by_owner.get(member.id)
+    guild = member.guild
+
+    if existing_session:
+        channel = guild.get_channel(existing_session.channel_id)
+        role = guild.get_role(existing_session.role_id)
+        if channel and role:
+            if role not in member.roles:
+                try:
+                    await member.add_roles(role, reason="Restoring private voice owner role")
+                except Exception as e:
+                    print(f"Failed to restore VC owner role: {e}")
+            try:
+                await member.move_to(channel)
+            except Exception as e:
+                print(f"Failed to move member to existing private VC: {e}")
+            return
+        else:
+            _unregister_private_voice_session(member.id)
+
+    parent_category = lobby_channel.category
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+    }
+
+    try:
+        role = await guild.create_role(
+            name=f"{member.display_name}'s VC",
+            mentionable=False,
+            reason="Creating private voice channel owner role",
+        )
+        overwrites[role] = discord.PermissionOverwrite(
+            view_channel=True,
+            connect=True,
+            speak=True,
+            stream=True,
+            use_voice_activation=True,
+        )
+
+        bot_member = guild.me
+        if bot_member:
+            overwrites[bot_member] = discord.PermissionOverwrite(
+                view_channel=True,
+                connect=True,
+                speak=True,
+                move_members=True,
+                manage_channels=True,
+            )
+
+        channel = await guild.create_voice_channel(
+            name=f"{member.display_name}'s Room",
+            category=parent_category,
+            overwrites=overwrites,
+            reason="Creating private voice channel",
+        )
+
+        session = PrivateVoiceSession(
+            owner_id=member.id,
+            channel_id=channel.id,
+            role_id=role.id,
+        )
+        _register_private_voice_session(session)
+
+        await member.add_roles(role, reason="Granting private voice ownership")
+        await member.move_to(channel)
+    except Exception as e:
+        print(f"Failed to create private voice channel: {e}")
+
+
+async def _cleanup_private_voice(channel: discord.VoiceChannel):
+    session = _get_private_session_by_channel(channel.id)
+    if session is None:
+        return
+
+    if any(not m.bot for m in channel.members):
+        return
+
+    guild = channel.guild
+    role = guild.get_role(session.role_id) if guild else None
+
+    try:
+        await channel.delete(reason="Removing empty private voice channel")
+    except Exception as e:
+        print(f"Failed to delete private voice channel: {e}")
+
+    if role:
+        try:
+            await role.delete(reason="Removing private voice owner role")
+        except Exception as e:
+            print(f"Failed to delete private voice role: {e}")
+
+    _unregister_private_voice_session(session.owner_id)
+
+
+def _get_owner_role(guild: discord.Guild, owner_id: int) -> Optional[discord.Role]:
+    session = private_voice_by_owner.get(owner_id)
+    if session is None:
+        return None
+    role = guild.get_role(session.role_id)
+    if role is None:
+        _unregister_private_voice_session(owner_id)
+        return None
+    return role
+
+
+def _record_chat_activity(message: discord.Message) -> bool:
+    if message.guild is None:
+        return False
+
+    if message.author.bot:
+        return False
+
+    if message.content and message.content.startswith(str(bot.command_prefix)):
+        return False
+
+    now = datetime.utcnow()
+    window = chat_activity[message.guild.id]
+    window.append((now, message.author.id))
+
+    while window and (now - window[0][0]) > timedelta(seconds=30):
+        window.popleft()
+
+    active_window = [(ts, uid) for ts, uid in window if (now - ts) <= timedelta(seconds=20)]
+    unique_users = {uid for _, uid in active_window}
+
+    if len(active_window) < 6 or len(unique_users) < 3:
+        return False
+
+    last_trigger = chat_activity_cooldowns.get(message.guild.id)
+    if last_trigger and (now - last_trigger) < timedelta(seconds=45):
+        return False
+
+    if random.random() < 0.35:
+        chat_activity_cooldowns[message.guild.id] = now
+        return True
+
+    return False
+
+
 async def _send_flagged_message_report(
     message: discord.Message, verdict: dict[str, object]
 ) -> None:
     if message.guild is None:
         return
 
-    channel = message.guild.get_channel(AUDIT_LOG_CHANNEL_ID)
+    channel_id = get_audit_log_channel_id(message.guild)
+    channel = message.guild.get_channel(channel_id) if channel_id else None
     if channel is None:
         return
 
@@ -334,6 +567,7 @@ async def _scan_message_safety(message: discord.Message) -> None:
 
     if str(verdict.get("verdict", "safe")).lower() != "safe":
         await _send_flagged_message_report(message, verdict)
+
 
 
 async def send_audit_log(
@@ -342,7 +576,8 @@ async def send_audit_log(
     if guild is None:
         return
 
-    channel = guild.get_channel(AUDIT_LOG_CHANNEL_ID)
+    channel_id = get_audit_log_channel_id(guild)
+    channel = guild.get_channel(channel_id) if channel_id else None
     if channel is None:
         return
 
@@ -369,7 +604,8 @@ async def grant_gem_role(member: discord.Member, *, trigger: str) -> None:
     if member.guild is None:
         return
 
-    gem_role = member.guild.get_role(GEM_ROLE_ID)
+    gem_role_id = get_gem_role_id(member.guild)
+    gem_role = member.guild.get_role(gem_role_id) if gem_role_id else None
     if gem_role is None or gem_role in member.roles:
         return
 
@@ -386,17 +622,20 @@ async def grant_gem_role(member: discord.Member, *, trigger: str) -> None:
     )
 
 
-def _text_contains_gem_phrase(text: str | None) -> bool:
-    return text is not None and GEM_TRIGGER_PHRASE in text.lower()
+def _text_contains_gem_phrase(text: str | None, phrase: str) -> bool:
+    return text is not None and phrase in text.lower()
 
 
 async def mentions_gem_phrase(member: discord.Member) -> bool:
     # Check rich presence and custom status
+    trigger_phrase = get_gem_trigger_phrase(member.guild).lower()
     for activity in member.activities or []:
         if isinstance(activity, discord.CustomActivity):
-            if _text_contains_gem_phrase(str(activity.name or activity.state or "")):
+            if _text_contains_gem_phrase(
+                str(activity.name or activity.state or ""), trigger_phrase
+            ):
                 return True
-        elif _text_contains_gem_phrase(getattr(activity, "name", None)):
+        elif _text_contains_gem_phrase(getattr(activity, "name", None), trigger_phrase):
             return True
 
     # Check profile/about me when available
@@ -404,7 +643,7 @@ async def mentions_gem_phrase(member: discord.Member) -> bool:
     if callable(profile_method):
         try:
             profile = await profile_method()
-            if _text_contains_gem_phrase(getattr(profile, "bio", None)):
+            if _text_contains_gem_phrase(getattr(profile, "bio", None), trigger_phrase):
                 return True
         except Exception as e:
             print(f"Failed to check member profile for gem phrase: {e}")
@@ -540,6 +779,14 @@ def build_help_pages(prefix: str) -> list[discord.Embed]:
         ),
         inline=False,
     )
+    moderation.add_field(
+        name=f"{prefix}guildconfig", 
+        value=(
+            "Show or adjust server-specific defaults (auto roles, audit log channel, voice lobby) "
+            "so you can run IsraelGPT beyond the primary guild. Subcommands: `set`, `clear`."
+        ),
+        inline=False,
+    )
 
     community = discord.Embed(title="Community & Utility", color=0x2ECC71)
     community.add_field(
@@ -580,6 +827,14 @@ def build_help_pages(prefix: str) -> list[discord.Embed]:
         value=(
             "Set a reminder like `,remind 15m Drink water`. I'll ping you in this channel "
             "when time's up."
+        ),
+        inline=False,
+    )
+    community.add_field(
+        name=f"{prefix}botresources",
+        value=(
+            "Quick links and command highlights for BleedBot and Greed so members can explore "
+            "those ecosystems from any server."
         ),
         inline=False,
     )
@@ -644,11 +899,155 @@ async def help_command(ctx):
     view = HelpPaginator(ctx, pages)
     await ctx.send(embed=view._update_footer(), view=view)
 
+
+@bot.group(name="guildconfig", invoke_without_command=True)
+async def guildconfig(ctx):
+    if ctx.guild is None:
+        return
+    settings = get_guild_settings(ctx.guild.id)
+
+    resolved_voice = get_voice_channel_ids(ctx.guild)
+    resolved_lobby = get_private_voice_lobby_id(ctx.guild)
+
+    embed = discord.Embed(
+        title=f"Guild configuration for {ctx.guild.name}", color=0x1ABC9C
+    )
+    embed.add_field(
+        name="Auto role",
+        value=str(settings.auto_role_id or "Not set (inherit default)"),
+        inline=False,
+    )
+    embed.add_field(
+        name="Gem role",
+        value=str(settings.gem_role_id or "Not set (inherit default)"),
+        inline=False,
+    )
+    embed.add_field(
+        name="Gem trigger phrase",
+        value=settings.gem_trigger_phrase or "Not set",
+        inline=False,
+    )
+    embed.add_field(
+        name="Audit log channel",
+        value=str(settings.audit_log_channel_id or "Not set (inherit default)"),
+        inline=False,
+    )
+    embed.add_field(
+        name="Voice monitor channels",
+        value=", ".join(str(cid) for cid in sorted(resolved_voice))
+        if resolved_voice
+        else "None configured",
+        inline=False,
+    )
+    embed.add_field(
+        name="Private VC lobby",
+        value=str(resolved_lobby or "None configured"),
+        inline=False,
+    )
+
+    await ctx.send(embed=embed)
+
+
+@guildconfig.command(name="set")
+async def guildconfig_set(ctx, key: str | None = None, *, value: str | None = None):
+    if ctx.guild is None:
+        return
+
+    if not (ctx.author.guild_permissions.manage_guild or ctx.author.guild_permissions.administrator):
+        await ctx.send("You need Manage Server permissions to change this, chaver.")
+        return
+
+    if key is None or value is None:
+        await ctx.send(
+            "Usage: ,guildconfig set <auto_role|gem_role|audit_channel|voice_channels|lobby_channel|gem_phrase> <value>"
+        )
+        return
+
+    key = key.lower()
+    settings = guild_settings.setdefault(ctx.guild.id, GuildSettings())
+
+    try:
+        if key in {"auto_role", "gem_role"}:
+            role = await commands.RoleConverter().convert(ctx, value)
+            if key == "auto_role":
+                settings.auto_role_id = role.id
+            else:
+                settings.gem_role_id = role.id
+            await ctx.send(f"Updated {key.replace('_', ' ')} to {role.mention} ({role.id}).")
+        elif key == "audit_channel":
+            channel = await commands.TextChannelConverter().convert(ctx, value)
+            settings.audit_log_channel_id = channel.id
+            await ctx.send(f"Audit log channel set to {channel.mention} ({channel.id}).")
+        elif key == "voice_channels":
+            converter = commands.VoiceChannelConverter()
+            channel_ids: set[int] = set()
+            for token in value.split():
+                channel = await converter.convert(ctx, token)
+                channel_ids.add(channel.id)
+            settings.voice_channel_ids = channel_ids or None
+            await ctx.send(
+                "Voice monitor channels updated to: "
+                + (", ".join(f"<#{cid}>" for cid in channel_ids) if channel_ids else "None")
+            )
+        elif key == "lobby_channel":
+            channel = await commands.VoiceChannelConverter().convert(ctx, value)
+            settings.private_voice_lobby_id = channel.id
+            await ctx.send(f"Private VC lobby set to {channel.mention} ({channel.id}).")
+        elif key == "gem_phrase":
+            settings.gem_trigger_phrase = value.lower()
+            await ctx.send(f"Gem trigger phrase updated to `{settings.gem_trigger_phrase}`.")
+        else:
+            await ctx.send("Unknown key. Valid options: auto_role, gem_role, audit_channel, voice_channels, lobby_channel, gem_phrase")
+            return
+
+        save_guild_config(ctx.guild.id, settings)
+    except commands.BadArgument as e:
+        await ctx.send(f"I couldn't parse that value: {e}")
+    except Exception as e:
+        await ctx.send(f"Something went wrong while updating config: {e}")
+
+
+@guildconfig.command(name="clear")
+async def guildconfig_clear(ctx, key: str | None = None):
+    if ctx.guild is None:
+        return
+
+    if not (ctx.author.guild_permissions.manage_guild or ctx.author.guild_permissions.administrator):
+        await ctx.send("You need Manage Server permissions to change this, chaver.")
+        return
+
+    if key is None:
+        await ctx.send("Specify which key to clear.")
+        return
+
+    key = key.lower()
+    settings = guild_settings.setdefault(ctx.guild.id, GuildSettings())
+
+    if key == "auto_role":
+        settings.auto_role_id = None
+    elif key == "gem_role":
+        settings.gem_role_id = None
+    elif key == "audit_channel":
+        settings.audit_log_channel_id = None
+    elif key == "voice_channels":
+        settings.voice_channel_ids = None
+    elif key == "lobby_channel":
+        settings.private_voice_lobby_id = None
+    elif key == "gem_phrase":
+        settings.gem_trigger_phrase = GEM_TRIGGER_PHRASE
+    else:
+        await ctx.send("Unknown key. Valid options: auto_role, gem_role, audit_channel, voice_channels, lobby_channel, gem_phrase")
+        return
+
+    save_guild_config(ctx.guild.id, settings)
+    await ctx.send(f"Cleared custom value for {key}; now using defaults.")
+
 @bot.event
 async def on_member_join(member):
     # Auto Role - Assign "unpolished" role
-    if AUTO_ROLE_ID:
-        role = member.guild.get_role(AUTO_ROLE_ID)
+    auto_role_id = get_auto_role_id(member.guild)
+    if auto_role_id:
+        role = member.guild.get_role(auto_role_id)
         if role:
             try:
                 await member.add_roles(role)
@@ -661,7 +1060,7 @@ async def on_member_join(member):
             except Exception as e:
                 print(f"Failed to assign role: {e}")
         else:
-            print(f"Role with ID {AUTO_ROLE_ID} not found")
+            print(f"Role with ID {auto_role_id} not found")
 
     # Welcome Message
     channel = member.guild.system_channel
@@ -675,7 +1074,8 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
         return
 
     if await mentions_gem_phrase(after):
-        await grant_gem_role(after, trigger=f"displaying {GEM_TRIGGER_PHRASE} in profile")
+        trigger_phrase = get_gem_trigger_phrase(after.guild)
+        await grant_gem_role(after, trigger=f"displaying {trigger_phrase} in profile")
 
 
 @bot.event
@@ -683,105 +1083,138 @@ async def on_voice_state_update(member: discord.Member, before, after):
     before_channel = before.channel if before else None
     after_channel = after.channel if after else None
 
-    if after_channel and after_channel.id in VOICE_CHANNEL_IDS and not member.bot:
+    private_lobby_id = get_private_voice_lobby_id(member.guild)
+    if after_channel and private_lobby_id and after_channel.id == private_lobby_id and not member.bot:
+        await _ensure_private_voice(member, after_channel)
+
+    configured_voice_channels = get_voice_channel_ids(member.guild)
+    if after_channel and after_channel.id in configured_voice_channels and not member.bot:
         await _ensure_voice_monitor(after_channel)
 
     if (
         before_channel
-        and before_channel.id in VOICE_CHANNEL_IDS
+        and before_channel.id in configured_voice_channels
         and (after_channel is None or after_channel.id != before_channel.id)
     ):
         await _stop_monitor_if_empty(before_channel)
+
+    if before_channel and _get_private_session_by_channel(before_channel.id):
+        await _cleanup_private_voice(before_channel)
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    if message.guild is not None:
-        log_audit_message(
-            message_id=message.id,
-            guild_id=message.guild.id,
-            channel_id=message.channel.id,
-            author_id=message.author.id,
-            content=message.content or "",
-            created_at=message.created_at,
-        )
-
-    # Anti-nuke detection
-    user_id = message.author.id
-    now = datetime.now()
-    
-    # Clean old timestamps (older than 10 seconds)
-    message_timestamps[user_id] = [
-        ts for ts in message_timestamps[user_id] 
-        if now - ts < timedelta(seconds=10)
-    ]
-    
-    message_timestamps[user_id].append(now)
-    
-    # If more than 20 messages in 10 seconds, start deleting
-    if len(message_timestamps[user_id]) > 20:
-        try:
-            await message.delete()
-            if len(message_timestamps[user_id]) == 21:  # Only warn once
-                await message.channel.send(
-                    f"Oy vey {message.author.mention}, slow down! Anti-spam triggered.",
-                    delete_after=5
-                )
-        except:
-            pass
-        await bot.process_commands(message)
-        return
-
-    if message.guild is not None:
-        bot.loop.create_task(_scan_message_safety(message))
-    # Track messages for leaderboard, leveling, and user activity
-    if message.guild is not None:
-        record_message(message.guild.id, user_id, now)
-        messages, xp, level, leveled_up = increment_activity(
-            message.guild.id,
-            user_id,
-            xp_gain=5,
-        )
-
-        # Level up notification
-        if leveled_up:
-            await message.channel.send(
-                f"Mazel tov {message.author.mention}! You leveled up to level {level}! 🎉"
-            )
-
-        # Grant Gem role at 150 messages
-        if messages == 150:
-            await grant_gem_role(message.author, trigger="reaching 150 messages")
-            await message.channel.send(
-                f"Sababa! {message.author.mention} reached 150 messages and earned the Gem role! 💎"
-            )
-
-    # LLM response when the bot is mentioned (but not when running a command)
     try:
-        mentioned_bot = bot.user is not None and bot.user in message.mentions
-    except Exception:
-        mentioned_bot = False
+        if message.guild is not None:
+            log_audit_message(
+                message_id=message.id,
+                guild_id=message.guild.id,
+                channel_id=message.channel.id,
+                author_id=message.author.id,
+                content=message.content or "",
+                created_at=message.created_at,
+            )
 
-    if mentioned_bot and not message.content.startswith(str(bot.command_prefix)):
-        content = message.content
-        if message.guild is not None and message.guild.me is not None:
-            content = content.replace(message.guild.me.mention, "").strip()
-        if not content:
-            content = "Say something helpful and friendly."
+        # Anti-nuke detection
+        user_id = message.author.id
+        now = datetime.now()
 
-        reply = await generate_israeli_reply(
-            user_message=content,
-            username=message.author.display_name,
-            guild_name=message.guild.name if message.guild else None,
-            guild_id=message.guild.id if message.guild else None,
-            user_id=message.author.id,
-            channel_id=message.channel.id,
-        )
-        if reply:
-            await message.reply(reply)
+        # Clean old timestamps (older than 10 seconds)
+        message_timestamps[user_id] = [
+            ts for ts in message_timestamps[user_id]
+            if now - ts < timedelta(seconds=10)
+        ]
 
+        message_timestamps[user_id].append(now)
+
+        spam_handled = False
+
+        # If more than 20 messages in 10 seconds, start deleting
+        if len(message_timestamps[user_id]) > 20:
+            spam_handled = True
+            try:
+                await message.delete()
+                if len(message_timestamps[user_id]) == 21:  # Only warn once
+                    await message.channel.send(
+                        f"Oy vey {message.author.mention}, slow down! Anti-spam triggered.",
+                        delete_after=5
+                    )
+            except Exception as e:
+                print(f"Anti-spam handling failed: {e}")
+
+        if message.guild is not None:
+            bot.loop.create_task(_scan_message_safety(message))
+
+        if not spam_handled and message.guild is not None:
+            # Track messages for leaderboard, leveling, and user activity
+            record_message(message.guild.id, user_id, now)
+            messages, xp, level, leveled_up = increment_activity(
+                message.guild.id,
+                user_id,
+                xp_gain=5,
+            )
+
+            # Level up notification
+            if leveled_up:
+                await message.channel.send(
+                    f"Mazel tov {message.author.mention}! You leveled up to level {level}! 🎉"
+                )
+
+            # Grant Gem role at 150 messages
+            if messages == 150:
+                await grant_gem_role(message.author, trigger="reaching 150 messages")
+                await message.channel.send(
+                    f"Sababa! {message.author.mention} reached 150 messages and earned the Gem role! 💎"
+                )
+
+        # Jump into active chats with a friendly AI reply when conversations heat up
+        should_reply = _record_chat_activity(message)
+        if should_reply:
+            prompt = message.content or "Join the conversation with something helpful and welcoming."
+            try:
+                reply = await generate_israeli_reply(
+                    user_message=prompt,
+                    username=message.author.display_name,
+                    guild_name=message.guild.name if message.guild else None,
+                    guild_id=message.guild.id if message.guild else None,
+                    user_id=message.author.id,
+                    channel_id=message.channel.id,
+                )
+                if reply:
+                    await message.channel.send(reply)
+            except Exception as e:
+                print(f"Active chat reply failed: {e}")
+
+        # LLM response when the bot is mentioned (but not when running a command)
+        try:
+            mentioned_bot = bot.user is not None and bot.user in message.mentions
+        except Exception:
+            mentioned_bot = False
+
+        if mentioned_bot and (not message.content or not message.content.startswith(str(bot.command_prefix))):
+            content = message.content
+            if message.guild is not None and message.guild.me is not None:
+                content = content.replace(message.guild.me.mention, "").strip()
+            if not content:
+                content = "Say something helpful and friendly."
+
+            try:
+                reply = await generate_israeli_reply(
+                    user_message=content,
+                    username=message.author.display_name,
+                    guild_name=message.guild.name if message.guild else None,
+                    guild_id=message.guild.id if message.guild else None,
+                    user_id=message.author.id,
+                    channel_id=message.channel.id,
+                )
+                if reply:
+                    await message.reply(reply)
+            except Exception as e:
+                print(f"Mention reply failed: {e}")
+    except Exception as e:
+        print(f"on_message pipeline failed: {e}")
     await bot.process_commands(message)
 
 
@@ -1009,6 +1442,35 @@ async def info(ctx):
     await ctx.send(embed=embed)
 
 
+@bot.command(name="botresources", aliases=["bleedbot", "greed"])
+async def botresources(ctx):
+    embed = discord.Embed(
+        title="Community bot resources",
+        description=(
+            "Quick references for popular community tools so you can onboard new guilds without leaving the chat."
+        ),
+        color=0x95A5A6,
+    )
+    embed.add_field(
+        name="BleedBot",
+        value=(
+            "Moderation, logging, and autorole helper. Common commands include `/setup`, `/automod`, "
+            "and `/purge`. Full list: https://bleed.bot/commands"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Greed (greed.best)",
+        value=(
+            "Economy and utility bot with games and leaderboards. Popular commands: `/balance`, "
+            "`/daily`, `/work`, and `/shop`. Explore more at https://greed.best/commands"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="These links pull the latest docs directly from the bot authors.")
+    await ctx.send(embed=embed)
+
+
 @bot.command(name='poll')
 async def poll(ctx, *, question_and_options: str | None = None):
     if question_and_options is None:
@@ -1092,6 +1554,60 @@ async def serverbanner(ctx):
         await ctx.send(embed=embed)
     else:
         await ctx.send("This server has no banner, chaver!")
+
+
+@bot.command(name='vcinvite')
+async def vcinvite(ctx, member: discord.Member | None = None):
+    if ctx.guild is None:
+        return
+
+    if member is None:
+        await ctx.send("Mention who you want to invite to your private VC, chaver.")
+        return
+
+    if member.bot:
+        await ctx.send("Bots don't need an invite—they're already special!")
+        return
+
+    owner_role = _get_owner_role(ctx.guild, ctx.author.id)
+    if owner_role is None:
+        await ctx.send("You don't own a private voice channel right now.")
+        return
+
+    try:
+        await member.add_roles(owner_role, reason=f"Invited to {ctx.author.display_name}'s private VC")
+        await ctx.send(f"Added {member.mention} to your private VC role.")
+    except discord.Forbidden:
+        await ctx.send("I can't manage roles for that user, bubbeleh.")
+    except Exception as e:
+        await ctx.send(f"Couldn't invite them: {e}")
+
+
+@bot.command(name='vcremove')
+async def vcremove(ctx, member: discord.Member | None = None):
+    if ctx.guild is None:
+        return
+
+    if member is None:
+        await ctx.send("Mention who you want to remove from your private VC role.")
+        return
+
+    owner_role = _get_owner_role(ctx.guild, ctx.author.id)
+    if owner_role is None:
+        await ctx.send("You don't own a private voice channel right now.")
+        return
+
+    if owner_role not in member.roles:
+        await ctx.send("They don't have access to your private VC, yalla.")
+        return
+
+    try:
+        await member.remove_roles(owner_role, reason=f"Removed from {ctx.author.display_name}'s private VC")
+        await ctx.send(f"Removed {member.mention} from your private VC role.")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to adjust their roles.")
+    except Exception as e:
+        await ctx.send(f"Couldn't remove them: {e}")
 
 # Music commands
 music_queue = {}
