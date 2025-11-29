@@ -9,6 +9,8 @@ from collections import defaultdict, deque
 import re
 from dataclasses import dataclass, asdict
 from typing import Dict, Optional
+import json
+from pathlib import Path
 import random
 
 from tickets import setup_ticket_system, register_ticket_view
@@ -30,6 +32,7 @@ AUDIT_LOG_CHANNEL_ID = 1442833351307300874
 DEFAULT_VOICE_CHANNEL_IDS = {1441899961225576458, 1441877144413278228}
 DEFAULT_PRIVATE_VOICE_LOBBY_ID = 1444420249264066591
 VOICE_TRANSCRIBE_INTERVAL = 5
+GUILD_CONFIG_PATH = Path("guild_configs.json")
 PRIMARY_GUILD_ID = int(os.getenv("PRIMARY_GUILD_ID", "0"))
 
 # Intents
@@ -246,32 +249,26 @@ class GuildSettings:
 
 
 def load_guild_configs():
-    try:
-        stored_configs = load_all_guild_settings()
-    except Exception as e:
-        print(f"Failed to load guild configs: {e}")
+    if not GUILD_CONFIG_PATH.exists():
         return
 
-    for key, value in stored_configs.items():
-        try:
-            guild_settings[int(key)] = GuildSettings.from_dict(value)
-        except Exception as e:
-            print(f"Skipping invalid guild config for {key}: {e}")
-
-
-def save_guild_config(guild_id: int, settings: "GuildSettings"):
     try:
-        save_guild_settings(
-            guild_id,
-            auto_role_id=settings.auto_role_id,
-            gem_role_id=settings.gem_role_id,
-            gem_trigger_phrase=settings.gem_trigger_phrase,
-            audit_log_channel_id=settings.audit_log_channel_id,
-            voice_channel_ids=settings.voice_channel_ids,
-            private_voice_lobby_id=settings.private_voice_lobby_id,
-        )
+        data = json.loads(GUILD_CONFIG_PATH.read_text())
+        for key, value in data.items():
+            try:
+                guild_settings[int(key)] = GuildSettings.from_dict(value)
+            except Exception as e:
+                print(f"Skipping invalid guild config for {key}: {e}")
     except Exception as e:
-        print(f"Failed to persist guild settings for {guild_id}: {e}")
+        print(f"Failed to load guild configs: {e}")
+
+
+def save_guild_configs():
+    try:
+        serializable = {str(k): v.to_dict() for k, v in guild_settings.items()}
+        GUILD_CONFIG_PATH.write_text(json.dumps(serializable, indent=2))
+    except Exception as e:
+        print(f"Failed to save guild configs: {e}")
 
 
 def get_guild_settings(guild_id: int | None) -> GuildSettings:
@@ -1000,7 +997,7 @@ async def guildconfig_set(ctx, key: str | None = None, *, value: str | None = No
             await ctx.send("Unknown key. Valid options: auto_role, gem_role, audit_channel, voice_channels, lobby_channel, gem_phrase")
             return
 
-        save_guild_config(ctx.guild.id, settings)
+        save_guild_configs()
     except commands.BadArgument as e:
         await ctx.send(f"I couldn't parse that value: {e}")
     except Exception as e:
@@ -1039,7 +1036,7 @@ async def guildconfig_clear(ctx, key: str | None = None):
         await ctx.send("Unknown key. Valid options: auto_role, gem_role, audit_channel, voice_channels, lobby_channel, gem_phrase")
         return
 
-    save_guild_config(ctx.guild.id, settings)
+    save_guild_configs()
     await ctx.send(f"Cleared custom value for {key}; now using defaults.")
 
 @bot.event
@@ -1193,12 +1190,44 @@ async def on_message(message):
         except Exception:
             mentioned_bot = False
 
-        if mentioned_bot and (not message.content or not message.content.startswith(str(bot.command_prefix))):
-            content = message.content
-            if message.guild is not None and message.guild.me is not None:
-                content = content.replace(message.guild.me.mention, "").strip()
-            if not content:
-                content = "Say something helpful and friendly."
+    # Jump into active chats with a friendly AI reply when conversations heat up
+    should_reply = _record_chat_activity(message)
+    if should_reply:
+        prompt = message.content or "Join the conversation with something helpful and welcoming."
+        reply = await generate_israeli_reply(
+            user_message=prompt,
+            username=message.author.display_name,
+            guild_name=message.guild.name if message.guild else None,
+            guild_id=message.guild.id if message.guild else None,
+            user_id=message.author.id,
+            channel_id=message.channel.id,
+        )
+        if reply:
+            await message.channel.send(reply)
+
+    # LLM response when the bot is mentioned (but not when running a command)
+    try:
+        mentioned_bot = bot.user is not None and bot.user in message.mentions
+    except Exception:
+        mentioned_bot = False
+
+    if mentioned_bot and (not message.content or not message.content.startswith(str(bot.command_prefix))):
+        content = message.content
+        if message.guild is not None and message.guild.me is not None:
+            content = content.replace(message.guild.me.mention, "").strip()
+        if not content:
+            content = "Say something helpful and friendly."
+
+        reply = await generate_israeli_reply(
+            user_message=content,
+            username=message.author.display_name,
+            guild_name=message.guild.name if message.guild else None,
+            guild_id=message.guild.id if message.guild else None,
+            user_id=message.author.id,
+            channel_id=message.channel.id,
+        )
+        if reply:
+            await message.reply(reply)
 
             try:
                 reply = await generate_israeli_reply(
