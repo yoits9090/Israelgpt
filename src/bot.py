@@ -17,6 +17,7 @@ from tickets import setup_ticket_system, register_ticket_view
 from db.levels import increment_activity, get_user_stats, get_top_users
 from db.users import record_message
 from db.audit import log_message as log_audit_message, get_message as get_logged_message, record_deletion
+from db.guild_config import load_all_guild_settings, save_guild_settings
 from llm_client import generate_israeli_reply, classify_message_safety
 
 # Load environment variables
@@ -1102,65 +1103,92 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    if message.guild is not None:
-        log_audit_message(
-            message_id=message.id,
-            guild_id=message.guild.id,
-            channel_id=message.channel.id,
-            author_id=message.author.id,
-            content=message.content or "",
-            created_at=message.created_at,
-        )
+    try:
+        if message.guild is not None:
+            log_audit_message(
+                message_id=message.id,
+                guild_id=message.guild.id,
+                channel_id=message.channel.id,
+                author_id=message.author.id,
+                content=message.content or "",
+                created_at=message.created_at,
+            )
 
-    # Anti-nuke detection
-    user_id = message.author.id
-    now = datetime.now()
-    
-    # Clean old timestamps (older than 10 seconds)
-    message_timestamps[user_id] = [
-        ts for ts in message_timestamps[user_id] 
-        if now - ts < timedelta(seconds=10)
-    ]
-    
-    message_timestamps[user_id].append(now)
-    
-    # If more than 20 messages in 10 seconds, start deleting
-    if len(message_timestamps[user_id]) > 20:
-        try:
-            await message.delete()
-            if len(message_timestamps[user_id]) == 21:  # Only warn once
+        # Anti-nuke detection
+        user_id = message.author.id
+        now = datetime.now()
+
+        # Clean old timestamps (older than 10 seconds)
+        message_timestamps[user_id] = [
+            ts for ts in message_timestamps[user_id]
+            if now - ts < timedelta(seconds=10)
+        ]
+
+        message_timestamps[user_id].append(now)
+
+        spam_handled = False
+
+        # If more than 20 messages in 10 seconds, start deleting
+        if len(message_timestamps[user_id]) > 20:
+            spam_handled = True
+            try:
+                await message.delete()
+                if len(message_timestamps[user_id]) == 21:  # Only warn once
+                    await message.channel.send(
+                        f"Oy vey {message.author.mention}, slow down! Anti-spam triggered.",
+                        delete_after=5
+                    )
+            except Exception as e:
+                print(f"Anti-spam handling failed: {e}")
+
+        if message.guild is not None:
+            bot.loop.create_task(_scan_message_safety(message))
+
+        if not spam_handled and message.guild is not None:
+            # Track messages for leaderboard, leveling, and user activity
+            record_message(message.guild.id, user_id, now)
+            messages, xp, level, leveled_up = increment_activity(
+                message.guild.id,
+                user_id,
+                xp_gain=5,
+            )
+
+            # Level up notification
+            if leveled_up:
                 await message.channel.send(
-                    f"Oy vey {message.author.mention}, slow down! Anti-spam triggered.",
-                    delete_after=5
+                    f"Mazel tov {message.author.mention}! You leveled up to level {level}! 🎉"
                 )
-        except:
-            pass
-        await bot.process_commands(message)
-        return
 
-    if message.guild is not None:
-        bot.loop.create_task(_scan_message_safety(message))
-    # Track messages for leaderboard, leveling, and user activity
-    if message.guild is not None:
-        record_message(message.guild.id, user_id, now)
-        messages, xp, level, leveled_up = increment_activity(
-            message.guild.id,
-            user_id,
-            xp_gain=5,
-        )
+            # Grant Gem role at 150 messages
+            if messages == 150:
+                await grant_gem_role(message.author, trigger="reaching 150 messages")
+                await message.channel.send(
+                    f"Sababa! {message.author.mention} reached 150 messages and earned the Gem role! 💎"
+                )
 
-        # Level up notification
-        if leveled_up:
-            await message.channel.send(
-                f"Mazel tov {message.author.mention}! You leveled up to level {level}! 🎉"
-            )
+        # Jump into active chats with a friendly AI reply when conversations heat up
+        should_reply = _record_chat_activity(message)
+        if should_reply:
+            prompt = message.content or "Join the conversation with something helpful and welcoming."
+            try:
+                reply = await generate_israeli_reply(
+                    user_message=prompt,
+                    username=message.author.display_name,
+                    guild_name=message.guild.name if message.guild else None,
+                    guild_id=message.guild.id if message.guild else None,
+                    user_id=message.author.id,
+                    channel_id=message.channel.id,
+                )
+                if reply:
+                    await message.channel.send(reply)
+            except Exception as e:
+                print(f"Active chat reply failed: {e}")
 
-        # Grant Gem role at 150 messages
-        if messages == 150:
-            await grant_gem_role(message.author, trigger="reaching 150 messages")
-            await message.channel.send(
-                f"Sababa! {message.author.mention} reached 150 messages and earned the Gem role! 💎"
-            )
+        # LLM response when the bot is mentioned (but not when running a command)
+        try:
+            mentioned_bot = bot.user is not None and bot.user in message.mentions
+        except Exception:
+            mentioned_bot = False
 
     # Jump into active chats with a friendly AI reply when conversations heat up
     should_reply = _record_chat_activity(message)
@@ -1201,6 +1229,21 @@ async def on_message(message):
         if reply:
             await message.reply(reply)
 
+            try:
+                reply = await generate_israeli_reply(
+                    user_message=content,
+                    username=message.author.display_name,
+                    guild_name=message.guild.name if message.guild else None,
+                    guild_id=message.guild.id if message.guild else None,
+                    user_id=message.author.id,
+                    channel_id=message.channel.id,
+                )
+                if reply:
+                    await message.reply(reply)
+            except Exception as e:
+                print(f"Mention reply failed: {e}")
+    except Exception as e:
+        print(f"on_message pipeline failed: {e}")
     await bot.process_commands(message)
 
 
