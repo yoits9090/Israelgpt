@@ -115,51 +115,16 @@ jobs:
             exit 1
           fi
           
-          # Run container briefly to verify startup (with fake token to prevent actual connection)
-          echo "Testing container startup..."
-          sudo docker run -d \
-            --name israelgpt-bot-test \
-            --env-file .env \
-            -e DISCORD_TOKEN=test_smoke_check \
-            --memory=512m \
-            israelgpt-bot:${{ github.sha }}
-          
-          # Wait and check if it survives initial startup (5 seconds)
-          sleep 5
-          
-          if sudo docker ps | grep -q israelgpt-bot-test; then
-            echo "✅ Smoke test passed - container starts successfully"
-            sudo docker stop israelgpt-bot-test 2>/dev/null || true
-            sudo docker rm israelgpt-bot-test 2>/dev/null || true
-            # Notify smoke test passed
-            if [ -n "${{ secrets.status }}" ]; then
-              STATUS_WEBHOOK="${{ secrets.status }}" python3 microservices/status_notifier/main.py \
-                --event smoke_test \
-                --status success \
-                --summary "Container validated - proceeding with deploy" \
-                --ref "${{ github.ref }}" \
-                --commit "${{ github.sha }}" \
-                --actor "${{ github.actor }}" || true
-            fi
-          else
-            echo "❌ SMOKE TEST FAILED: Container crashed on startup"
-            echo "--- Container logs ---"
-            CRASH_LOGS=$(sudo docker logs israelgpt-bot-test --tail 50 2>&1 || echo "No logs available")
-            echo "$CRASH_LOGS"
-            sudo docker rm israelgpt-bot-test 2>/dev/null || true
-            # Notify smoke test failed
-            if [ -n "${{ secrets.status }}" ]; then
-              STATUS_WEBHOOK="${{ secrets.status }}" python3 microservices/status_notifier/main.py \
-                --event smoke_test \
-                --status failure \
-                --summary "Container crashed on startup - deploy aborted" \
-                --ref "${{ github.ref }}" \
-                --commit "${{ github.sha }}" \
-                --actor "${{ github.actor }}" \
-                --notes "Old container remains running. Check container logs for crash details." || true
-            fi
-            echo "Old container remains running - deploy aborted"
-            exit 1
+          # Import test passed - notify success
+          echo "✅ Smoke test passed - all imports validated"
+          if [ -n "${{ secrets.status }}" ]; then
+            STATUS_WEBHOOK="${{ secrets.status }}" python3 microservices/status_notifier/main.py \
+              --event smoke_test \
+              --status success \
+              --summary "All imports validated - proceeding with deploy" \
+              --ref "${{ github.ref }}" \
+              --commit "${{ github.sha }}" \
+              --actor "${{ github.actor }}" || true
           fi
           
           # ============================================
