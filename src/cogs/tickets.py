@@ -189,7 +189,7 @@ class TicketsCog(commands.Cog, name="Tickets"):
         # Register persistent view
         bot.add_view(_get_view())
 
-    @commands.command(name="marketplacesetup")
+    @commands.hybrid_command(name="marketplacesetup")
     @commands.has_permissions(manage_guild=True)
     async def marketplacesetup(self, ctx: commands.Context):
         """Set up the marketplace listing panel."""
@@ -228,7 +228,7 @@ class TicketsCog(commands.Cog, name="Tickets"):
         else:
             await ctx.send("Marketplace panel deployed, sababa.", delete_after=5)
 
-    @commands.command(name="ticketsetup")
+    @commands.hybrid_command(name="ticketsetup")
     @commands.has_permissions(manage_guild=True)
     async def ticketsetup(self, ctx: commands.Context, handler: discord.Member):
         """Create a generic ticket panel for a specific handler."""

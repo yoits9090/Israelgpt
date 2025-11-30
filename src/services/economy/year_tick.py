@@ -24,6 +24,7 @@ from db.economy import (
     log_history,
     get_random_event,
 )
+from economy_service.rust_adapter import EconomyMath
 
 
 class YearTickResult:
@@ -56,6 +57,7 @@ async def process_year_tick(guild_id: int) -> YearTickResult:
     
     result = YearTickResult(guild_id, new_year)
     policies = get_all_policies(guild_id)
+    math = EconomyMath(policies)
     
     # Get all living citizens
     citizens = get_all_citizens(guild_id, alive_only=True)
@@ -64,13 +66,13 @@ async def process_year_tick(guild_id: int) -> YearTickResult:
     _process_aging(guild_id, citizens, policies, result)
     
     # 2. Income (jobs and businesses)
-    _process_income(guild_id, citizens, policies, nation, result)
+    _process_income(guild_id, citizens, policies, nation, result, math)
     
     # 3. Rent collection
     _process_rent(guild_id, policies, result)
     
     # 4. Tax collection
-    _process_taxes(guild_id, citizens, policies, nation, result)
+    _process_taxes(guild_id, citizens, policies, nation, result, math)
     
     # 5. UBI / Welfare
     _process_welfare(guild_id, citizens, policies, nation, result)
@@ -155,9 +157,9 @@ def _handle_death(guild_id: int, citizen: Dict,
 
 
 def _process_income(guild_id: int, citizens: List[Dict], 
-                   policies: Dict, nation: Dict, result: YearTickResult):
+                   policies: Dict, nation: Dict, result: YearTickResult, math: EconomyMath):
     """Process job salaries and business profits."""
-    min_wage = policies.get("min_wage", 400)
+    min_wage = math.min_wage
     
     for citizen in citizens:
         user_id = citizen["user_id"]
@@ -239,9 +241,8 @@ def _process_rent(guild_id: int, policies: Dict, result: YearTickResult):
 
 
 def _process_taxes(guild_id: int, citizens: List[Dict], 
-                  policies: Dict, nation: Dict, result: YearTickResult):
+                  policies: Dict, nation: Dict, result: YearTickResult, math: EconomyMath):
     """Collect income and wealth taxes."""
-    income_tax = policies.get("income_tax_rate", 0.15)
     wealth_tax = policies.get("wealth_tax_rate", 0.0)
     
     for citizen in citizens:
@@ -250,8 +251,7 @@ def _process_taxes(guild_id: int, citizens: List[Dict],
         
         # Wealth tax (on balance over threshold)
         if wealth_tax > 0 and balance > 50000:
-            taxable_wealth = balance - 50000
-            tax = taxable_wealth * wealth_tax
+            tax = math.wealth_tax(balance, 50_000.0)
             if transfer_balance(guild_id, user_id, 0, tax):
                 result.taxes_collected += tax
 

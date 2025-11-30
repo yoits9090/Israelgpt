@@ -59,7 +59,7 @@ class GovernmentCog(commands.Cog, name="Government"):
 
     # ============ Nation Setup Commands ============
 
-    @commands.command(name="nation")
+    @commands.hybrid_command(name="nation")
     async def nation_info(self, ctx: commands.Context):
         """View nation information."""
         nation = get_or_create_nation(ctx.guild.id)
@@ -124,7 +124,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="nation-setup")
+    @commands.hybrid_command(name="nation-setup")
     @commands.has_permissions(administrator=True)
     async def nation_setup(self, ctx: commands.Context, *, name: str):
         """Initialize your nation (Admin only)."""
@@ -139,7 +139,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         
         await ctx.send(f"🎉 **{name}** has been founded! Use `,nation` to view details.")
 
-    @commands.command(name="nation-config")
+    @commands.hybrid_command(name="nation-config")
     @commands.has_permissions(administrator=True)
     async def nation_config(self, ctx: commands.Context, key: str = "", *, value: str = ""):
         """Configure nation settings (Admin only)."""
@@ -180,7 +180,7 @@ class GovernmentCog(commands.Cog, name="Government"):
 
     # ============ Policy & Law Commands ============
 
-    @commands.command(name="policies")
+    @commands.hybrid_command(name="policies")
     async def list_policies(self, ctx: commands.Context):
         """View all current policies."""
         policies = get_all_policies(ctx.guild.id)
@@ -227,7 +227,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="law")
+    @commands.hybrid_command(name="law")
     async def law_cmd(self, ctx: commands.Context, action: str = "list", *, args: str = ""):
         """Manage laws. Actions: propose, list, vote, info"""
         nation = get_or_create_nation(ctx.guild.id)
@@ -355,7 +355,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         else:
             await ctx.send("❌ Unknown action. Use: `list`, `propose`, `vote`, `info`")
 
-    @commands.command(name="policy")
+    @commands.hybrid_command(name="policy")
     @commands.has_permissions(administrator=True)
     async def set_policy_direct(self, ctx: commands.Context, key: str, *, value: str):
         """Directly set a policy (Admin only, bypasses voting)."""
@@ -388,7 +388,7 @@ class GovernmentCog(commands.Cog, name="Government"):
 
     # ============ Office & Election Commands ============
 
-    @commands.command(name="offices")
+    @commands.hybrid_command(name="offices")
     async def list_offices(self, ctx: commands.Context):
         """View government offices."""
         offices = get_offices(ctx.guild.id)
@@ -425,7 +425,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="appoint")
+    @commands.hybrid_command(name="appoint")
     @commands.has_permissions(administrator=True)
     async def appoint_office(self, ctx: commands.Context, office_name: str, member: discord.Member):
         """Appoint someone to office (Admin or with appoint power)."""
@@ -452,7 +452,7 @@ class GovernmentCog(commands.Cog, name="Government"):
 
     # ============ Special Actions ============
 
-    @commands.command(name="abolish-landlords")
+    @commands.hybrid_command(name="abolish-landlords")
     async def abolish_landlords(self, ctx: commands.Context, compensate: str = "yes"):
         """Socialize all property (requires government power or admin)."""
         if not ctx.author.guild_permissions.administrator:
@@ -474,7 +474,7 @@ class GovernmentCog(commands.Cog, name="Government"):
                       f"{count} properties have been transferred to state ownership {comp_str}!\n"
                       f"All rent now goes to the national treasury.")
 
-    @commands.command(name="force-tick")
+    @commands.hybrid_command(name="force-tick")
     @commands.has_permissions(administrator=True)
     async def force_tick(self, ctx: commands.Context):
         """Force a year tick (Admin only, for testing)."""

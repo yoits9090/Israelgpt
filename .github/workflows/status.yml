@@ -1,0 +1,45 @@
+name: Status Notifications
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+  push:
+    branches: ["**"]
+
+env:
+  STATUS_WEBHOOK: ${{ secrets.status }}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    if: ${{ env.STATUS_WEBHOOK != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify Pull Request
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          python microservices/status_notifier/main.py \
+            --event pr \
+            --status "${{ github.event.action }}" \
+            --summary "${{ github.event.pull_request.title }}" \
+            --ref "${{ github.event.pull_request.head.ref }}" \
+            --commit "${{ github.event.pull_request.head.sha }}" \
+            --actor "${{ github.actor }}" \
+            --url "${{ github.event.pull_request.html_url }}"
+
+      - name: Notify Push
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          SUMMARY="$(echo "${{ github.event.head_commit.message }}" | tr '\n' ' ')"
+          if [ -z "$SUMMARY" ]; then SUMMARY="Push to ${{ github.ref }}"; fi
+          URL="${{ github.event.head_commit.url }}"
+          if [ -z "$URL" ]; then URL="https://github.com/${{ github.repository }}/commit/${{ github.sha }}"; fi
+          python microservices/status_notifier/main.py \
+            --event push \
+            --status success \
+            --summary "$SUMMARY" \
+            --ref "${{ github.ref }}" \
+            --commit "${{ github.sha }}" \
+            --actor "${{ github.actor }}" \
+            --url "$URL"

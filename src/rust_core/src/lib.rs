@@ -194,6 +194,92 @@ fn rand_simple(ts: f64, guild_id: u64, user_id: u64) -> f64 {
     (result as f64) / (u64::MAX as f64)
 }
 
+/// Pseudo-random generator using two integer seeds.
+fn rand_from_pair(a: u64, b: u64) -> f64 {
+    let seed = a ^ b.rotate_left(13) ^ 0x9e37_79b9_7f4a_7c15;
+    let mixed = seed
+        .wrapping_mul(0xff51_afd7_ed55_8ccd)
+        .wrapping_add(seed.rotate_right(17));
+    (mixed as f64) / (u64::MAX as f64)
+}
+
+// ============================================
+// Economy helpers (hot paths exposed to Python)
+// ============================================
+
+#[pyclass]
+struct EconomyEngine {
+    elite_threshold: f64,
+    middle_threshold: f64,
+    min_wage: f64,
+    income_tax_rate: f64,
+    wealth_tax_rate: f64,
+}
+
+#[pymethods]
+impl EconomyEngine {
+    #[new]
+    #[pyo3(signature = (
+        elite_threshold = 100_000.0,
+        middle_threshold = 10_000.0,
+        min_wage = 400.0,
+        income_tax_rate = 0.15,
+        wealth_tax_rate = 0.0
+    ))]
+    fn new(
+        elite_threshold: f64,
+        middle_threshold: f64,
+        min_wage: f64,
+        income_tax_rate: f64,
+        wealth_tax_rate: f64,
+    ) -> Self {
+        EconomyEngine {
+            elite_threshold,
+            middle_threshold,
+            min_wage,
+            income_tax_rate,
+            wealth_tax_rate,
+        }
+    }
+
+    /// Classify a citizen's class tier based on balance thresholds.
+    fn classify(&self, balance: f64) -> String {
+        if balance >= self.elite_threshold {
+            "elite".to_string()
+        } else if balance >= self.middle_threshold {
+            "middle".to_string()
+        } else {
+            "working".to_string()
+        }
+    }
+
+    /// Calculate a single work action payout with XP bonus and variance.
+    fn work_payout(&self, annual_salary: f64, work_xp: i64, seed_a: u64, seed_b: u64) -> f64 {
+        let base_pay = annual_salary.max(self.min_wage) / 365.0 * 5.0;
+        let xp_bonus = 1.0 + (work_xp as f64 / 1000.0);
+        let variance = 0.8 + rand_from_pair(seed_a, seed_b) * 0.4;
+        base_pay * xp_bonus * variance
+    }
+
+    /// Compute income tax on a given income value.
+    fn income_tax(&self, income: f64) -> f64 {
+        if income <= 0.0 || self.income_tax_rate <= 0.0 {
+            0.0
+        } else {
+            income * self.income_tax_rate
+        }
+    }
+
+    /// Compute wealth tax over a threshold (default 50k in Python caller).
+    fn wealth_tax(&self, balance: f64, threshold: f64) -> f64 {
+        if balance <= threshold || self.wealth_tax_rate <= 0.0 {
+            0.0
+        } else {
+            (balance - threshold) * self.wealth_tax_rate
+        }
+    }
+}
+
 // ============================================
 // Database Writer with async queue
 // ============================================
@@ -385,6 +471,7 @@ fn israelgpt_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_duration_secs, m)?)?;
     m.add_function(wrap_pyfunction!(text_contains_phrase, m)?)?;
     m.add_class::<ActivityTrackerRust>()?;
+    m.add_class::<EconomyEngine>()?;
     m.add_class::<DatabaseWriter>()?;
     Ok(())
 }

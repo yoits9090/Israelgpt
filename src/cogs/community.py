@@ -17,7 +17,7 @@ class CommunityCog(commands.Cog, name="Community"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(name="leaderboard", aliases=["lb", "top"])
+    @commands.hybrid_command(name="leaderboard", aliases=["lb", "top"])
     async def leaderboard(self, ctx: commands.Context):
         """Show the top 10 chatters by messages and level."""
         rows = get_top_users(ctx.guild.id, limit=10)
@@ -39,7 +39,7 @@ class CommunityCog(commands.Cog, name="Community"):
         embed.set_footer(text="Keep chatting to climb the ranks!")
         await ctx.send(embed=embed)
 
-    @commands.command(name="rank", aliases=["level", "stats"])
+    @commands.hybrid_command(name="rank", aliases=["level", "stats"])
     async def rank(self, ctx: commands.Context, member: discord.Member = None):
         """View your or another member's stats."""
         member = member or ctx.author
@@ -53,7 +53,7 @@ class CommunityCog(commands.Cog, name="Community"):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name="info")
+    @commands.hybrid_command(name="info")
     async def info(self, ctx: commands.Context):
         """Show server information."""
         embed = discord.Embed(
@@ -67,7 +67,7 @@ class CommunityCog(commands.Cog, name="Community"):
         embed.set_footer(text="Developed with chutzpah")
         await ctx.send(embed=embed)
 
-    @commands.command(name="avatar", aliases=["av", "pfp"])
+    @commands.hybrid_command(name="avatar", aliases=["av", "pfp"])
     async def avatar(self, ctx: commands.Context, member: discord.Member = None):
         """Display a member's avatar."""
         member = member or ctx.author
@@ -76,7 +76,7 @@ class CommunityCog(commands.Cog, name="Community"):
         embed.set_footer(text="Sababa!")
         await ctx.send(embed=embed)
 
-    @commands.command(name="banner")
+    @commands.hybrid_command(name="banner")
     async def banner(self, ctx: commands.Context, member: discord.Member = None):
         """Display a member's banner."""
         member = member or ctx.author
@@ -88,7 +88,7 @@ class CommunityCog(commands.Cog, name="Community"):
         else:
             await ctx.send(f"Oy, {member.display_name} doesn't have a banner!")
 
-    @commands.command(name="servericon", aliases=["guildicon"])
+    @commands.hybrid_command(name="servericon", aliases=["guildicon"])
     async def servericon(self, ctx: commands.Context):
         """Display the server's icon."""
         if ctx.guild.icon:
@@ -98,7 +98,7 @@ class CommunityCog(commands.Cog, name="Community"):
         else:
             await ctx.send("This server has no icon, bubbeleh!")
 
-    @commands.command(name="serverbanner", aliases=["guildbanner"])
+    @commands.hybrid_command(name="serverbanner", aliases=["guildbanner"])
     async def serverbanner(self, ctx: commands.Context):
         """Display the server's banner."""
         if ctx.guild.banner:
@@ -108,7 +108,7 @@ class CommunityCog(commands.Cog, name="Community"):
         else:
             await ctx.send("This server has no banner, chaver!")
 
-    @commands.command(name="poll")
+    @commands.hybrid_command(name="poll")
     async def poll(self, ctx: commands.Context, *, question_and_options: str | None = None):
         """Create a reaction poll."""
         if question_and_options is None:
@@ -135,7 +135,7 @@ class CommunityCog(commands.Cog, name="Community"):
         for i in range(len(options)):
             await message.add_reaction(emoji_numbers[i])
 
-    @commands.command(name="remind", aliases=["reminder"])
+    @commands.hybrid_command(name="remind", aliases=["reminder"])
     async def remind(
         self, ctx: commands.Context, duration: str | None = None, *, reminder: str | None = None
     ):
@@ -158,7 +158,7 @@ class CommunityCog(commands.Cog, name="Community"):
         except Exception as e:
             print(f"Failed to send reminder: {e}")
 
-    @commands.command(name="botresources", aliases=["bleedbot", "greed"])
+    @commands.hybrid_command(name="botresources", aliases=["bleedbot", "greed"])
     async def botresources(self, ctx: commands.Context):
         """Show community bot resources."""
         embed = discord.Embed(

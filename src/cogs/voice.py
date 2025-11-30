@@ -286,7 +286,7 @@ class VoiceCog(commands.Cog, name="Voice"):
 
     # --- Commands ---
 
-    @commands.command(name="vcinvite")
+    @commands.hybrid_command(name="vcinvite")
     async def vcinvite(self, ctx: commands.Context, member: discord.Member | None = None):
         """Invite a member to your private voice channel."""
         if ctx.guild is None:
@@ -315,7 +315,7 @@ class VoiceCog(commands.Cog, name="Voice"):
         except Exception as e:
             await ctx.send(f"Couldn't invite them: {e}")
 
-    @commands.command(name="vcremove")
+    @commands.hybrid_command(name="vcremove")
     async def vcremove(self, ctx: commands.Context, member: discord.Member | None = None):
         """Remove a member from your private voice channel."""
         if ctx.guild is None:

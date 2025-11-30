@@ -16,7 +16,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(name="ban", aliases=["b"])
+    @commands.hybrid_command(name="ban", aliases=["b"])
     @commands.has_permissions(ban_members=True)
     async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = None):
         """Ban a member from the server."""
@@ -29,7 +29,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         except Exception as e:
             await ctx.send(f"Nu? I couldn't ban them. Error: {e}")
 
-    @commands.command(name="kick", aliases=["k"])
+    @commands.hybrid_command(name="kick", aliases=["k"])
     @commands.has_permissions(kick_members=True)
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = None):
         """Kick a member from the server."""
@@ -39,7 +39,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         except Exception as e:
             await ctx.send(f"Problem kicking this guy: {e}")
 
-    @commands.command(name="mute", aliases=["timeout"])
+    @commands.hybrid_command(name="mute", aliases=["timeout"])
     @commands.has_permissions(moderate_members=True)
     async def mute(
         self,
@@ -97,7 +97,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         except Exception as e:
             await ctx.send(f"Couldn't apply the mute: {e}")
 
-    @commands.command(name="clear", aliases=["c", "purge"])
+    @commands.hybrid_command(name="clear", aliases=["c", "purge"])
     @commands.has_permissions(manage_messages=True)
     async def clear(self, ctx: commands.Context, amount: int):
         """Bulk delete messages from the channel."""
@@ -106,7 +106,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         await asyncio.sleep(3)
         await msg.delete()
 
-    @commands.command(name="role", aliases=["r"])
+    @commands.hybrid_command(name="role", aliases=["r"])
     @commands.has_permissions(manage_roles=True)
     async def toggle_role(
         self, ctx: commands.Context, member: discord.Member, *, role_input: str
@@ -138,7 +138,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         except Exception as e:
             await ctx.send(f"Nu? Something went wrong: {e}")
 
-    @commands.command(name="slowmode")
+    @commands.hybrid_command(name="slowmode")
     @commands.has_permissions(manage_channels=True)
     async def slowmode(self, ctx: commands.Context, seconds: int | None = None):
         """Set or view channel slowmode."""

@@ -66,11 +66,21 @@ def setup_events(bot: commands.Bot) -> None:
     """Register all event handlers on the bot."""
     
     activity_tracker = ActivityTracker(bot_prefix=str(bot.command_prefix))
+    bot._slash_synced = False  # Lazy sync flag to avoid repeated global syncs
 
     @bot.event
     async def on_ready():
         print(f"{bot.user} has arrived! Shalom everyone!")
         await bot.change_presence(activity=discord.Game(name="Backgammon (Shesh Besh)"))
+
+        # Sync hybrid commands -> application commands once on startup
+        if not getattr(bot, "_slash_synced", False):
+            try:
+                await bot.tree.sync()
+                bot._slash_synced = True
+                print("Slash commands synced with Discord.")
+            except Exception as e:
+                print(f"Failed to sync application commands: {e}")
 
     @bot.event
     async def on_member_join(member: discord.Member):

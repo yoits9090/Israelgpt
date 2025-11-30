@@ -206,7 +206,7 @@ class AdminCog(commands.Cog, name="Admin"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(name="help")
+    @commands.hybrid_command(name="help")
     async def help_command(self, ctx: commands.Context):
         """Show the interactive help menu."""
         pages = build_help_pages(ctx.clean_prefix)

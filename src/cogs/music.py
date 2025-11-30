@@ -43,7 +43,7 @@ class MusicCog(commands.Cog, name="Music"):
                 self.bot.loop,
             )
 
-    @commands.command(name="play", aliases=["p"])
+    @commands.hybrid_command(name="play", aliases=["p"])
     async def play(self, ctx: commands.Context, *, url: str):
         """Play audio from YouTube."""
         if not ctx.author.voice:
@@ -81,7 +81,7 @@ class MusicCog(commands.Cog, name="Music"):
         except Exception as e:
             await ctx.send(f"Oy vey, error playing audio: {e}")
 
-    @commands.command(name="pause")
+    @commands.hybrid_command(name="pause")
     async def pause(self, ctx: commands.Context):
         """Pause the current track."""
         if ctx.voice_client and ctx.voice_client.is_playing():
@@ -90,7 +90,7 @@ class MusicCog(commands.Cog, name="Music"):
         else:
             await ctx.send("Nothing is playing, chaver!")
 
-    @commands.command(name="resume")
+    @commands.hybrid_command(name="resume")
     async def resume(self, ctx: commands.Context):
         """Resume paused playback."""
         if ctx.voice_client and ctx.voice_client.is_paused():
@@ -99,7 +99,7 @@ class MusicCog(commands.Cog, name="Music"):
         else:
             await ctx.send("Nothing is paused!")
 
-    @commands.command(name="skip")
+    @commands.hybrid_command(name="skip")
     async def skip(self, ctx: commands.Context):
         """Skip the current track."""
         if ctx.voice_client and ctx.voice_client.is_playing():
@@ -108,7 +108,7 @@ class MusicCog(commands.Cog, name="Music"):
         else:
             await ctx.send("Nothing is playing!")
 
-    @commands.command(name="stop")
+    @commands.hybrid_command(name="stop")
     async def stop(self, ctx: commands.Context):
         """Stop playback and clear the queue."""
         if ctx.voice_client:
@@ -119,7 +119,7 @@ class MusicCog(commands.Cog, name="Music"):
         else:
             await ctx.send("I'm not in a voice channel!")
 
-    @commands.command(name="leave", aliases=["disconnect", "dc"])
+    @commands.hybrid_command(name="leave", aliases=["disconnect", "dc"])
     async def leave(self, ctx: commands.Context):
         """Disconnect from voice channel."""
         if ctx.voice_client:

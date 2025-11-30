@@ -13,6 +13,7 @@ on:
 
 env:
   DEPLOY_PATH: /home/ubuntu/israelgpt
+  STATUS_WEBHOOK: ${{ secrets.status }}
 
 jobs:
   deploy:
@@ -21,6 +22,18 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Notify Deploy Started
+      if: always() && env.STATUS_WEBHOOK != ''
+      run: |
+        python microservices/status_notifier/main.py \
+          --event deploy \
+          --status started \
+          --summary "Deploy to EC2 started" \
+          --ref "${{ github.ref }}" \
+          --commit "${{ github.sha }}" \
+          --actor "${{ github.actor }}" \
+          --component "docker build + containers"
 
     - name: Copy files to EC2
       uses: appleboy/scp-action@v0.1.7
@@ -33,6 +46,7 @@ jobs:
         rm: false
 
     - name: Build and Deploy
+      id: deploy_step
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.EC2_HOST }}
@@ -108,6 +122,18 @@ jobs:
           sudo docker image prune -f
           
           echo "✅ Deploy complete!"
+
+    - name: Notify Deploy Result
+      if: always() && env.STATUS_WEBHOOK != ''
+      run: |
+        python microservices/status_notifier/main.py \
+          --event deploy \
+          --status "${{ steps.deploy_step.outcome }}" \
+          --summary "Docker build and EC2 container restart" \
+          --ref "${{ github.ref }}" \
+          --commit "${{ github.sha }}" \
+          --actor "${{ github.actor }}" \
+          --notes "Includes docker build, container restart, and health check on EC2."
 
     - name: Notify Discord
       if: always()
