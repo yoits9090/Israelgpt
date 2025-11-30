@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional, Dict
+import re
+from typing import Optional, Dict, List, Tuple
+
+import discord
 
 from db.llm import log_message, get_recent_conversation
 from .client import get_client
+
+# URL regex for truncating links
+_URL_PATTERN = re.compile(r'https?://\S+')
+
+
+def _truncate_links(text: str, max_len: int = 30) -> str:
+    """Replace long URLs with truncated versions."""
+    def replacer(match):
+        url = match.group(0)
+        if len(url) > max_len:
+            return url[:max_len] + "..."
+        return url
+    return _URL_PATTERN.sub(replacer, text)
 
 
 def _call_groq_sync(messages: list[Dict[str, str]]) -> Optional[str]:
@@ -29,6 +45,55 @@ def _call_groq_sync(messages: list[Dict[str, str]]) -> Optional[str]:
         return None
 
 
+async def fetch_channel_context(
+    channel: discord.TextChannel,
+    limit: int = 30,
+) -> List[Tuple[str, str, str]]:
+    """
+    Fetch recent messages from a channel for context.
+    Returns list of (username, user_id, content) tuples.
+    """
+    messages = []
+    try:
+        async for msg in channel.history(limit=limit):
+            if msg.author.bot:
+                continue
+            content = _truncate_links(msg.content or "")
+            if content:
+                messages.append((
+                    msg.author.display_name,
+                    str(msg.author.id),
+                    content[:500],  # Truncate long messages
+                ))
+    except Exception as e:
+        print(f"Failed to fetch channel history: {e}")
+    
+    # Reverse to chronological order (oldest first)
+    return list(reversed(messages))
+
+
+async def get_active_users_context(
+    guild_id: int,
+    user_ids: List[int],
+    max_per_user: int = 5,
+) -> Dict[int, List[Tuple[str, str]]]:
+    """
+    Get recent conversation history for multiple users.
+    Returns dict of user_id -> list of (role, content) tuples.
+    """
+    context = {}
+    for uid in user_ids[:10]:  # Limit to 10 users
+        history = get_recent_conversation(
+            guild_id=guild_id,
+            user_id=uid,
+            max_messages=max_per_user,
+            max_chars=1000,
+        )
+        if history:
+            context[uid] = history
+    return context
+
+
 async def generate_israeli_reply(
     user_message: str,
     username: str,
@@ -36,6 +101,8 @@ async def generate_israeli_reply(
     guild_id: Optional[int] = None,
     user_id: Optional[int] = None,
     channel_id: Optional[int] = None,
+    channel_context: Optional[List[Tuple[str, str, str]]] = None,
+    active_users_history: Optional[Dict[int, List[Tuple[str, str]]]] = None,
 ) -> Optional[str]:
     """Generate a very Israeli-sounding reply using Groq's llama-3.1-8b-instant.
 
@@ -67,11 +134,42 @@ async def generate_israeli_reply(
             role_name = "assistant" if role == "assistant" else "user"
             history_messages.append({"role": role_name, "content": content})
 
+    # Build channel context string (last 30 messages)
+    channel_context_str = ""
+    if channel_context:
+        chat_lines = []
+        for uname, uid, content in channel_context[-30:]:
+            chat_lines.append(f"{uname}: {content}")
+        if chat_lines:
+            channel_context_str = (
+                "\n--- Recent chat in this channel ---\n"
+                + "\n".join(chat_lines)
+                + "\n--- End of recent chat ---\n"
+            )
+
+    # Build active users' previous conversations with the bot
+    users_history_str = ""
+    if active_users_history:
+        user_sections = []
+        for uid, convos in active_users_history.items():
+            if convos:
+                convo_lines = [f"  {role}: {content[:150]}" for role, content in convos[-3:]]
+                user_sections.append(f"User {uid}'s recent exchanges:\n" + "\n".join(convo_lines))
+        if user_sections:
+            users_history_str = (
+                "\n--- Previous conversations with active chatters ---\n"
+                + "\n\n".join(user_sections[:5])  # Limit to 5 users
+                + "\n--- End of previous conversations ---\n"
+            )
+
     # For the current turn, keep content compact but informative
     current_content = (
-        f"User ({username}) in server {guild_name or 'unknown'} said:\n"
-        f"{user_message}\n\n"
-        "Reply in that very Israeli style, as if chatting in a Discord channel."
+        f"Server: {guild_name or 'unknown'}\n"
+        f"{channel_context_str}"
+        f"{users_history_str}\n"
+        f"Now {username} said: {user_message}\n\n"
+        "Jump into this conversation naturally. Be relevant to what people are discussing. "
+        "Reply in that very Israeli style, keeping it short and casual like Discord chat."
     )
 
     # Log the user prompt

@@ -13,7 +13,7 @@ from db.users import record_message
 from db.audit import log_message as log_audit_message, get_message as get_logged_message, record_deletion
 from services import send_audit_log, grant_gem_role, mentions_gem_phrase
 from services.audit import send_flagged_message_report
-from services.llm import generate_israeli_reply, classify_message_safety
+from services.llm import generate_israeli_reply, classify_message_safety, fetch_channel_context, get_active_users_context
 from utils import truncate
 
 from .activity import ActivityTracker
@@ -176,6 +176,21 @@ def setup_events(bot: commands.Bot) -> None:
                 if should_reply:
                     prompt = message.content or "Join the conversation with something helpful and welcoming."
                     try:
+                        # Fetch channel context (last 30 messages, truncate links)
+                        channel_context = await fetch_channel_context(message.channel, limit=30)
+                        
+                        # Get unique user IDs from recent chat
+                        active_user_ids = list(set(
+                            int(uid) for _, uid, _ in channel_context
+                        ))[:10]
+                        
+                        # Fetch those users' previous conversations with the bot
+                        users_history = await get_active_users_context(
+                            guild_id=message.guild.id,
+                            user_ids=active_user_ids,
+                            max_per_user=5,
+                        )
+                        
                         reply = await generate_israeli_reply(
                             user_message=prompt,
                             username=message.author.display_name,
@@ -183,6 +198,8 @@ def setup_events(bot: commands.Bot) -> None:
                             guild_id=message.guild.id if message.guild else None,
                             user_id=message.author.id,
                             channel_id=message.channel.id,
+                            channel_context=channel_context,
+                            active_users_history=users_history,
                         )
                         if reply:
                             await message.channel.send(reply)

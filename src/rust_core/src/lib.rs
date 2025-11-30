@@ -6,12 +6,16 @@
 //! - Chat activity window management (called on every message)
 //! - String operations (truncation, phrase matching)
 //! - Duration parsing
+//! - Async database writes via channel queue
 
 use pyo3::prelude::*;
 use dashmap::DashMap;
 use regex::Regex;
 use std::collections::VecDeque;
 use std::sync::LazyLock;
+use std::sync::mpsc::{self, Sender, Receiver};
+use std::thread;
+use std::sync::{Arc, Mutex};
 
 /// Global spam tracker: user_id -> list of timestamps (as f64 seconds since epoch)
 static SPAM_TIMESTAMPS: LazyLock<DashMap<u64, Vec<f64>>> = LazyLock::new(DashMap::new);
@@ -190,6 +194,190 @@ fn rand_simple(ts: f64, guild_id: u64, user_id: u64) -> f64 {
     (result as f64) / (u64::MAX as f64)
 }
 
+// ============================================
+// Database Writer with async queue
+// ============================================
+
+/// A database write operation to be queued
+#[derive(Clone)]
+enum DbWriteOp {
+    Transcription {
+        guild_id: u64,
+        channel_id: u64,
+        user_id: u64,
+        content: String,
+        username: String,
+        duration_secs: f64,
+    },
+    Generic {
+        table: String,
+        data: String, // JSON serialized
+    },
+    Shutdown,
+}
+
+/// Async database writer that queues writes to a background thread.
+/// This prevents database writes from blocking the Python async loop.
+#[pyclass]
+struct DatabaseWriter {
+    sender: Sender<DbWriteOp>,
+    pending_count: Arc<Mutex<usize>>,
+}
+
+#[pymethods]
+impl DatabaseWriter {
+    #[new]
+    fn new() -> PyResult<Self> {
+        let (sender, receiver): (Sender<DbWriteOp>, Receiver<DbWriteOp>) = mpsc::channel();
+        let pending_count = Arc::new(Mutex::new(0usize));
+        let pending_clone = pending_count.clone();
+
+        // Spawn background thread to process writes
+        thread::spawn(move || {
+            DatabaseWriter::process_writes(receiver, pending_clone);
+        });
+
+        Ok(DatabaseWriter { sender, pending_count })
+    }
+
+    /// Queue a transcription to be saved.
+    fn queue_transcription(
+        &self,
+        guild_id: u64,
+        channel_id: u64,
+        user_id: u64,
+        content: String,
+        username: String,
+        duration_secs: f64,
+    ) -> PyResult<()> {
+        let op = DbWriteOp::Transcription {
+            guild_id,
+            channel_id,
+            user_id,
+            content,
+            username,
+            duration_secs,
+        };
+        
+        if let Ok(mut count) = self.pending_count.lock() {
+            *count += 1;
+        }
+        
+        self.sender.send(op).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to queue write: {}", e))
+        })
+    }
+
+    /// Queue a generic database write (JSON data).
+    fn queue_write(&self, table: String, json_data: String) -> PyResult<()> {
+        let op = DbWriteOp::Generic {
+            table,
+            data: json_data,
+        };
+        
+        if let Ok(mut count) = self.pending_count.lock() {
+            *count += 1;
+        }
+        
+        self.sender.send(op).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to queue write: {}", e))
+        })
+    }
+
+    /// Get the number of pending writes.
+    fn pending_writes(&self) -> usize {
+        self.pending_count.lock().map(|c| *c).unwrap_or(0)
+    }
+
+    /// Flush all pending writes (blocks until complete).
+    fn flush(&self) -> PyResult<()> {
+        // Wait for pending count to reach 0
+        loop {
+            let count = self.pending_count.lock().map(|c| *c).unwrap_or(0);
+            if count == 0 {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(())
+    }
+}
+
+impl DatabaseWriter {
+    /// Background thread that processes write operations.
+    fn process_writes(receiver: Receiver<DbWriteOp>, pending_count: Arc<Mutex<usize>>) {
+        // We'll call back into Python to do the actual SQLite write
+        // This is a queue processor that batches operations
+
+        for op in receiver {
+            match op {
+                DbWriteOp::Shutdown => break,
+                DbWriteOp::Transcription { guild_id, channel_id, user_id, content, username, duration_secs } => {
+                    // Call Python to save - using pyo3's GIL
+                    Python::with_gil(|py| {
+                        let result = py.run_bound(
+                            &format!(
+                                r#"
+from db.transcriptions import save_transcription
+save_transcription({}, {}, {}, {}, {}, {})
+"#,
+                                guild_id,
+                                channel_id, 
+                                user_id,
+                                repr_string(&content),
+                                repr_string(&username),
+                                duration_secs
+                            ),
+                            None,
+                            None,
+                        );
+                        if let Err(e) = result {
+                            eprintln!("DB write failed: {}", e);
+                        }
+                    });
+                }
+                DbWriteOp::Generic { table, data } => {
+                    Python::with_gil(|py| {
+                        let result = py.run_bound(
+                            &format!(
+                                r#"
+import json
+data = json.loads({})
+# Generic write handler - implement per table
+print(f"Generic write to {{}}: {{data}}")
+"#,
+                                repr_string(&data),
+                                table
+                            ),
+                            None,
+                            None,
+                        );
+                        if let Err(e) = result {
+                            eprintln!("DB write failed: {}", e);
+                        }
+                    });
+                }
+            }
+
+            // Decrement pending count
+            if let Ok(mut count) = pending_count.lock() {
+                *count = count.saturating_sub(1);
+            }
+        }
+    }
+}
+
+impl Drop for DatabaseWriter {
+    fn drop(&mut self) {
+        let _ = self.sender.send(DbWriteOp::Shutdown);
+    }
+}
+
+/// Helper to create a Python repr string
+fn repr_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"))
+}
+
 /// Python module definition
 #[pymodule]
 fn israelgpt_core(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -197,5 +385,6 @@ fn israelgpt_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_duration_secs, m)?)?;
     m.add_function(wrap_pyfunction!(text_contains_phrase, m)?)?;
     m.add_class::<ActivityTrackerRust>()?;
+    m.add_class::<DatabaseWriter>()?;
     Ok(())
 }
