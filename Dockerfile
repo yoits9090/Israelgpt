@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.4
-
 # ============================================
 # Stage 1: Build Rust extension
 # ============================================
@@ -9,23 +7,21 @@ RUN apt-get update && \
     apt-get install -y curl build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Rust (cached in layer)
+# Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install maturin
 RUN pip install maturin
 
-WORKDIR /build
-
-# Copy only Rust source (changes less frequently)
-COPY src/rust_core/ ./rust_core/
-
-# Build wheel with cache mount for cargo
 WORKDIR /build/rust_core
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/build/rust_core/target \
-    maturin build --release || echo "Rust build failed - will use Python fallback"
+
+# Copy Rust source
+COPY src/rust_core/ ./
+
+# Build wheel - create empty dir if fails so COPY doesn't break
+RUN maturin build --release || true
+RUN mkdir -p /build/rust_core/target/wheels && touch /build/rust_core/target/wheels/.placeholder
 
 # ============================================
 # Stage 2: Build Node dependencies
@@ -43,24 +39,24 @@ FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Install only runtime dependencies (no build tools = smaller image)
+# Install runtime dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first (cached when requirements.txt unchanged)
+# Install Python dependencies
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy pre-built Rust wheel and install (if build succeeded)
-RUN --mount=type=bind,from=rust-builder,source=/build/rust_core/target/wheels,target=/wheels \
-    pip install /wheels/*.whl 2>/dev/null || echo "No Rust wheel - using Python fallback"
+# Copy pre-built Rust wheel and install (if exists)
+COPY --from=rust-builder /build/rust_core/target/wheels/ /tmp/wheels/
+RUN pip install /tmp/wheels/*.whl 2>/dev/null || echo "No Rust wheel - using Python fallback"
+RUN rm -rf /tmp/wheels
 
 # Copy Node modules for autobumper
 COPY --from=node-builder /build/node_modules ./autobumper/node_modules
 
-# Copy application source last (changes most frequently)
+# Copy application source
 COPY . .
 
 # Create data directory
