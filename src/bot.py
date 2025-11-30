@@ -466,6 +466,7 @@ async def _cleanup_private_voice(channel: discord.VoiceChannel):
 
     _unregister_private_voice_session(session.owner_id)
 
+    _unregister_private_voice_session(session.owner_id)
 
 def _get_owner_role(guild: discord.Guild, owner_id: int) -> Optional[discord.Role]:
     session = private_voice_by_owner.get(owner_id)
