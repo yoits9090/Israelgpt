@@ -83,7 +83,7 @@ class EconomyCog(commands.Cog, name="Economy"):
 
     # ============ Player Commands ============
 
-    @commands.hybrid_command(name="profile", aliases=["p", "me"])
+    @commands.hybrid_command(name="profile", aliases=["prof", "me"])
     async def profile(self, ctx: commands.Context, member: Optional[discord.Member] = None):
         """View your economic profile or another player's."""
         target = member or ctx.author
