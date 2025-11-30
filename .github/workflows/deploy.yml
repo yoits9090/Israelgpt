@@ -81,12 +81,36 @@ jobs:
           # ============================================
           echo "🧪 Running smoke test on new image..."
           
+          # Notify smoke test started
+          cd ${{ env.DEPLOY_PATH }}
+          if [ -n "${{ secrets.status }}" ]; then
+            STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+              --event smoke_test \
+              --status started \
+              --summary "Testing new Docker image before deploy" \
+              --ref "${{ github.ref }}" \
+              --commit "${{ github.sha }}" \
+              --actor "${{ github.actor }}" \
+              --component "docker image validation" || true
+          fi
+          
           # Run import check (catches import errors like missing modules)
           echo "Testing imports..."
-          if ! sudo docker run --rm \
+          if ! sudo docker run --rm -w /app/src \
             israelgpt-bot:${{ github.sha }} \
             python -c "from cogs import setup_all_cogs; from core.bot import IsraelGPT; print('✅ Imports OK')"; then
             echo "❌ SMOKE TEST FAILED: Import errors detected"
+            # Notify smoke test failed
+            if [ -n "${{ secrets.status }}" ]; then
+              STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+                --event smoke_test \
+                --status failure \
+                --summary "Import errors detected - deploy aborted" \
+                --ref "${{ github.ref }}" \
+                --commit "${{ github.sha }}" \
+                --actor "${{ github.actor }}" \
+                --notes "Old container remains running. Check imports in cogs/core modules." || true
+            fi
             echo "Old container remains running - deploy aborted"
             exit 1
           fi
@@ -107,11 +131,33 @@ jobs:
             echo "✅ Smoke test passed - container starts successfully"
             sudo docker stop israelgpt-bot-test 2>/dev/null || true
             sudo docker rm israelgpt-bot-test 2>/dev/null || true
+            # Notify smoke test passed
+            if [ -n "${{ secrets.status }}" ]; then
+              STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+                --event smoke_test \
+                --status success \
+                --summary "Container validated - proceeding with deploy" \
+                --ref "${{ github.ref }}" \
+                --commit "${{ github.sha }}" \
+                --actor "${{ github.actor }}" || true
+            fi
           else
             echo "❌ SMOKE TEST FAILED: Container crashed on startup"
             echo "--- Container logs ---"
-            sudo docker logs israelgpt-bot-test --tail 100
+            CRASH_LOGS=$(sudo docker logs israelgpt-bot-test --tail 50 2>&1 || echo "No logs available")
+            echo "$CRASH_LOGS"
             sudo docker rm israelgpt-bot-test 2>/dev/null || true
+            # Notify smoke test failed
+            if [ -n "${{ secrets.status }}" ]; then
+              STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+                --event smoke_test \
+                --status failure \
+                --summary "Container crashed on startup - deploy aborted" \
+                --ref "${{ github.ref }}" \
+                --commit "${{ github.sha }}" \
+                --actor "${{ github.actor }}" \
+                --notes "Old container remains running. Check container logs for crash details." || true
+            fi
             echo "Old container remains running - deploy aborted"
             exit 1
           fi
