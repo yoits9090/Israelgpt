@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import discord
@@ -10,14 +12,44 @@ from discord.ext import commands
 import yt_dlp
 
 
-YTDL_OPTIONS = {
-    "format": "bestaudio/best",
-    "noplaylist": True,
-    "quiet": True,
-    "no_warnings": True,
-    "default_search": "auto",
-    "source_address": "0.0.0.0",
-}
+def _get_ytdl_options() -> dict:
+    """Build yt-dlp options with cookie support if available."""
+    options = {
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "default_search": "auto",
+        "source_address": "0.0.0.0",
+        # Use mobile client to avoid some bot detection
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            }
+        },
+    }
+    
+    # Check for cookies file (place cookies.txt in /app/data/)
+    cookie_paths = [
+        Path("/app/data/cookies.txt"),
+        Path("data/cookies.txt"),
+        Path(os.getenv("YT_COOKIES_PATH", "")),
+    ]
+    
+    for cookie_path in cookie_paths:
+        if cookie_path and cookie_path.exists():
+            options["cookiefile"] = str(cookie_path)
+            break
+    
+    # Check for OAuth cache
+    cache_dir = Path("/app/data/.yt-dlp-cache")
+    if cache_dir.exists():
+        options["cachedir"] = str(cache_dir)
+    
+    return options
+
+
+YTDL_OPTIONS = _get_ytdl_options()
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
