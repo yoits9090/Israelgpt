@@ -73,9 +73,56 @@ jobs:
           echo "Building Docker image..."
           sudo DOCKER_BUILDKIT=1 docker build \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
-            -t israelgpt-bot:latest \
             -t israelgpt-bot:${{ github.sha }} \
             .
+          
+          # ============================================
+          # SMOKE TEST - Verify container starts before swapping
+          # ============================================
+          echo "🧪 Running smoke test on new image..."
+          
+          # Run import check (catches import errors like missing modules)
+          echo "Testing imports..."
+          if ! sudo docker run --rm \
+            israelgpt-bot:${{ github.sha }} \
+            python -c "from cogs import setup_all_cogs; from core.bot import IsraelGPT; print('✅ Imports OK')"; then
+            echo "❌ SMOKE TEST FAILED: Import errors detected"
+            echo "Old container remains running - deploy aborted"
+            exit 1
+          fi
+          
+          # Run container briefly to verify startup (with fake token to prevent actual connection)
+          echo "Testing container startup..."
+          sudo docker run -d \
+            --name israelgpt-bot-test \
+            --env-file .env \
+            -e DISCORD_TOKEN=test_smoke_check \
+            --memory=512m \
+            israelgpt-bot:${{ github.sha }}
+          
+          # Wait and check if it survives initial startup (5 seconds)
+          sleep 5
+          
+          if sudo docker ps | grep -q israelgpt-bot-test; then
+            echo "✅ Smoke test passed - container starts successfully"
+            sudo docker stop israelgpt-bot-test 2>/dev/null || true
+            sudo docker rm israelgpt-bot-test 2>/dev/null || true
+          else
+            echo "❌ SMOKE TEST FAILED: Container crashed on startup"
+            echo "--- Container logs ---"
+            sudo docker logs israelgpt-bot-test --tail 100
+            sudo docker rm israelgpt-bot-test 2>/dev/null || true
+            echo "Old container remains running - deploy aborted"
+            exit 1
+          fi
+          
+          # ============================================
+          # DEPLOY - Only runs if smoke test passed
+          # ============================================
+          echo "✅ Smoke test passed - proceeding with deploy..."
+          
+          # Tag as latest now that we know it works
+          sudo docker tag israelgpt-bot:${{ github.sha }} israelgpt-bot:latest
           
           # Stop old containers gracefully
           echo "Stopping old containers..."
@@ -106,7 +153,7 @@ jobs:
             israelgpt-bot:latest \
             bash -c 'cd autobumper && node index.js'
 
-          # Health check
+          # Final health check
           echo "Checking container health..."
           sleep 5
           if sudo docker ps | grep -q israelgpt-bot; then

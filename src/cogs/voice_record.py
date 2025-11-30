@@ -7,6 +7,7 @@ from typing import Optional, Dict, Set
 
 import discord
 from discord.ext import commands
+from discord.ext import voice_recv
 
 from services.transcription import (
     VoiceRecordingSession,
@@ -15,21 +16,28 @@ from services.transcription import (
 )
 
 
-class AudioSink(discord.sinks.Sink):
+class AudioSink(voice_recv.AudioSink):
     """Custom audio sink that collects audio per user."""
 
     def __init__(self):
         super().__init__()
         self.audio_data: Dict[int, io.BytesIO] = {}
 
-    def write(self, data, user):
+    def wants_opus(self) -> bool:
+        """We want decoded PCM data, not opus."""
+        return False
+
+    def write(self, user, data: voice_recv.VoiceData):
+        """Called when audio data is received."""
         if user is None:
             return
         user_id = user.id if hasattr(user, 'id') else user
         
         if user_id not in self.audio_data:
             self.audio_data[user_id] = io.BytesIO()
-        self.audio_data[user_id].write(data)
+        # data.pcm contains the decoded PCM audio
+        if data.pcm:
+            self.audio_data[user_id].write(data.pcm)
 
     def get_user_audio(self, user_id: int) -> Optional[bytes]:
         """Get collected audio for a user and clear the buffer."""
@@ -50,7 +58,7 @@ class VoiceRecordCog(commands.Cog):
         self.bot = bot
         self.active_sinks: Dict[int, AudioSink] = {}  # channel_id -> sink
         self.recording_tasks: Dict[int, asyncio.Task] = {}  # channel_id -> task
-        self.voice_clients: Dict[int, discord.VoiceClient] = {}  # channel_id -> vc
+        self.voice_clients: Dict[int, voice_recv.VoiceRecvClient] = {}  # channel_id -> vc
         self.user_names: Dict[int, str] = {}
         self.ignored_channels: Set[int] = set()  # Channels to not auto-join
 
@@ -64,15 +72,15 @@ class VoiceRecordCog(commands.Cog):
             return
 
         try:
-            # Connect silently
-            voice_client = await channel.connect()
+            # Connect using VoiceRecvClient for receiving audio
+            voice_client = await channel.connect(cls=voice_recv.VoiceRecvClient)
             self.voice_clients[channel_id] = voice_client
 
             # Start session
             session = get_or_create_session(guild_id, channel_id)
             session.start()
 
-            # Create sink and start recording
+            # Create sink and start listening
             sink = AudioSink()
             self.active_sinks[channel_id] = sink
 
@@ -81,8 +89,8 @@ class VoiceRecordCog(commands.Cog):
                 if not member.bot:
                     self.user_names[member.id] = member.display_name
 
-            # Start recording
-            voice_client.start_recording(sink, self._on_recording_done, channel)
+            # Start listening (voice_recv API)
+            voice_client.listen(sink, after=self._on_listen_error)
 
             # Start periodic transcription
             self.recording_tasks[channel_id] = asyncio.create_task(
@@ -99,11 +107,11 @@ class VoiceRecordCog(commands.Cog):
             self.recording_tasks[channel_id].cancel()
             del self.recording_tasks[channel_id]
 
-        # Stop recording
+        # Stop listening and disconnect
         if channel_id in self.voice_clients:
             vc = self.voice_clients[channel_id]
             try:
-                vc.stop_recording()
+                vc.stop_listening()
             except:
                 pass
             try:
@@ -120,16 +128,10 @@ class VoiceRecordCog(commands.Cog):
             self.active_sinks[channel_id].cleanup()
             del self.active_sinks[channel_id]
 
-    async def _on_recording_done(self, sink: AudioSink, channel: discord.VoiceChannel):
-        """Callback when recording stops - final transcription pass."""
-        session = get_or_create_session(channel.guild.id, channel.id)
-        
-        for user_id, audio_buffer in sink.audio_data.items():
-            audio_bytes = audio_buffer.getvalue()
-            if len(audio_bytes) > 1000:
-                username = self.user_names.get(user_id, str(user_id))
-                wav_data = self._pcm_to_wav(audio_bytes)
-                await session.process_audio(wav_data, user_id, username)
+    def _on_listen_error(self, error: Optional[Exception]):
+        """Callback when listening stops or errors."""
+        if error:
+            print(f"Voice receive error: {error}")
 
     async def _periodic_transcription(
         self,
