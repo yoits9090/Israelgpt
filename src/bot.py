@@ -1191,58 +1191,53 @@ async def on_message(message):
         except Exception:
             mentioned_bot = False
 
-    # Jump into active chats with a friendly AI reply when conversations heat up
-    should_reply = _record_chat_activity(message)
-    if should_reply:
-        prompt = message.content or "Join the conversation with something helpful and welcoming."
-        reply = await generate_israeli_reply(
-            user_message=prompt,
-            username=message.author.display_name,
-            guild_name=message.guild.name if message.guild else None,
-            guild_id=message.guild.id if message.guild else None,
-            user_id=message.author.id,
-            channel_id=message.channel.id,
-        )
-        if reply:
-            await message.channel.send(reply)
+        # Jump into active chats with a friendly AI reply when conversations heat up
+        should_reply = _record_chat_activity(message)
+        if should_reply:
+            prompt = message.content or "Join the conversation with something helpful and welcoming."
+            reply = await generate_israeli_reply(
+                user_message=prompt,
+                username=message.author.display_name,
+                guild_name=message.guild.name if message.guild else None,
+                guild_id=message.guild.id if message.guild else None,
+                user_id=message.author.id,
+                channel_id=message.channel.id,
+            )
+            if reply:
+                await message.channel.send(reply)
 
-    # LLM response when the bot is mentioned (but not when running a command)
-    try:
-        mentioned_bot = bot.user is not None and bot.user in message.mentions
-    except Exception:
-        mentioned_bot = False
+        # LLM response when the bot is mentioned (but not when running a command)
+        if mentioned_bot and (not message.content or not message.content.startswith(str(bot.command_prefix))):
+            content = message.content
+            if message.guild is not None and message.guild.me is not None:
+                content = content.replace(message.guild.me.mention, "").strip()
+            if not content:
+                content = "Say something helpful and friendly."
 
-    if mentioned_bot and (not message.content or not message.content.startswith(str(bot.command_prefix))):
-        content = message.content
-        if message.guild is not None and message.guild.me is not None:
-            content = content.replace(message.guild.me.mention, "").strip()
-        if not content:
-            content = "Say something helpful and friendly."
+            reply = await generate_israeli_reply(
+                user_message=content,
+                username=message.author.display_name,
+                guild_name=message.guild.name if message.guild else None,
+                guild_id=message.guild.id if message.guild else None,
+                user_id=message.author.id,
+                channel_id=message.channel.id,
+            )
+            if reply:
+                await message.reply(reply)
 
-        reply = await generate_israeli_reply(
-            user_message=content,
-            username=message.author.display_name,
-            guild_name=message.guild.name if message.guild else None,
-            guild_id=message.guild.id if message.guild else None,
-            user_id=message.author.id,
-            channel_id=message.channel.id,
-        )
-        if reply:
-            await message.reply(reply)
-
-            try:
-                reply = await generate_israeli_reply(
-                    user_message=content,
-                    username=message.author.display_name,
-                    guild_name=message.guild.name if message.guild else None,
-                    guild_id=message.guild.id if message.guild else None,
-                    user_id=message.author.id,
-                    channel_id=message.channel.id,
-                )
-                if reply:
-                    await message.reply(reply)
-            except Exception as e:
-                print(f"Mention reply failed: {e}")
+                try:
+                    reply = await generate_israeli_reply(
+                        user_message=content,
+                        username=message.author.display_name,
+                        guild_name=message.guild.name if message.guild else None,
+                        guild_id=message.guild.id if message.guild else None,
+                        user_id=message.author.id,
+                        channel_id=message.channel.id,
+                    )
+                    if reply:
+                        await message.reply(reply)
+                except Exception as e:
+                    print(f"Mention reply failed: {e}")
     except Exception as e:
         print(f"on_message pipeline failed: {e}")
     await bot.process_commands(message)
