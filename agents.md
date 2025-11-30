@@ -1,0 +1,2 @@
+when possible, spin off code into other microservices and components to improve maintainablity and resource usage. 
+Also in microservices that gets lots of requests, try to create it's functionality in rust to improve speed

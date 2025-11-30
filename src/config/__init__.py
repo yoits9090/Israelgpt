@@ -13,6 +13,7 @@ from .settings import (
     PRIMARY_GUILD_ID,
     MARKETPLACE_CHANNEL_ID,
     MARKETPLACE_STAFF_ROLE_IDS,
+    GROQ_API_KEY,
 )
 
 from .guild_config import (
@@ -42,6 +43,7 @@ __all__ = [
     "PRIMARY_GUILD_ID",
     "MARKETPLACE_CHANNEL_ID",
     "MARKETPLACE_STAFF_ROLE_IDS",
+    "GROQ_API_KEY",
     "GuildSettings",
     "guild_settings",
     "load_guild_configs",
