@@ -3,67 +3,125 @@ name: Deploy to EC2
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE'
+
+  # Allow manual deploys from GitHub UI
+  workflow_dispatch:
+
+env:
+  DEPLOY_PATH: /home/ubuntu/israelgpt
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Copy files to EC2
-      uses: appleboy/scp-action@master
+      uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
         source: "."
-        target: "/home/ubuntu/israelgpt"
+        target: ${{ env.DEPLOY_PATH }}
+        rm: false
 
-    - name: Build and Restart Docker
-      uses: appleboy/ssh-action@master
+    - name: Build and Deploy
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        command_timeout: 10m
+        script: |
+          set -e
+          cd ${{ env.DEPLOY_PATH }}
+          
+          # Create .env file from secrets
+          echo "Creating .env file..."
+          echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" > .env
+          echo "AUTO_ROLE_ID=${{ secrets.AUTO_ROLE_ID }}" >> .env
+          echo "GROQ_API=${{ secrets.GROQ_API }}" >> .env
+          echo "PRIMARY_GUILD_ID=${{ secrets.PRIMARY_GUILD_ID }}" >> .env
+          echo "DISCORDBUMP_TOKEN=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
+          echo "token=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
+
+          # Ensure data directory exists
+          mkdir -p ${{ env.DEPLOY_PATH }}/data
+          
+          # Build with BuildKit for faster cached builds
+          echo "Building Docker image..."
+          sudo DOCKER_BUILDKIT=1 docker build \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            -t israelgpt-bot:latest \
+            -t israelgpt-bot:${{ github.sha }} \
+            .
+          
+          # Stop old containers gracefully
+          echo "Stopping old containers..."
+          sudo docker stop israelgpt-bot israelgpt-autobumper 2>/dev/null || true
+          sudo docker rm israelgpt-bot israelgpt-autobumper 2>/dev/null || true
+          
+          # Start bot container with resource limits
+          echo "Starting bot container..."
+          sudo docker run -d \
+            --name israelgpt-bot \
+            --restart unless-stopped \
+            --env-file .env \
+            --memory=512m \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            -v ${{ env.DEPLOY_PATH }}/data:/app/data \
+            israelgpt-bot:latest
+
+          # Start autobumper container
+          echo "Starting autobumper container..."
+          sudo docker run -d \
+            --name israelgpt-autobumper \
+            --restart unless-stopped \
+            --env-file .env \
+            --memory=128m \
+            --log-opt max-size=5m \
+            --log-opt max-file=2 \
+            israelgpt-bot:latest \
+            bash -c 'cd autobumper && node index.js'
+
+          # Health check
+          echo "Checking container health..."
+          sleep 5
+          if sudo docker ps | grep -q israelgpt-bot; then
+            echo "✅ Bot is running"
+          else
+            echo "❌ Bot failed to start"
+            sudo docker logs israelgpt-bot --tail 50
+            exit 1
+          fi
+
+          # Cleanup old images (keep last 3)
+          echo "Cleaning up old images..."
+          sudo docker image prune -f
+          
+          echo "✅ Deploy complete!"
+
+    - name: Notify Discord
+      if: always() && secrets.DISCORD_WEBHOOK != ''
+      continue-on-error: true
+      uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
-          cd /home/ubuntu/israelgpt
-          
-          # Create .env file from secrets (main bot + autobumper)
-          echo "Creating .env file..."
-          echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" > .env
-          echo "AUTO_ROLE_ID=${{ secrets.AUTO_ROLE_ID }}" >> .env
-          echo "GROQ_API=${{ secrets.GROQ_API }}" >> .env
-          echo "DISCORDBUMP_TOKEN=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
-          echo "token=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
-
-          # Ensure data directory exists on host
-          mkdir -p /home/ubuntu/israelgpt/data
-          
-          # Build the image
-          echo "Building Docker image..."
-          sudo docker build -t israelgpt-bot .
-          
-          # Stop and remove existing containers
-          echo "Stopping old containers..."
-          sudo docker stop israelgpt-bot || true
-          sudo docker rm israelgpt-bot || true
-          sudo docker stop israelgpt-autobumper || true
-          sudo docker rm israelgpt-autobumper || true
-          
-          # Run new containers
-          echo "Starting new bot container..."
-          sudo docker run -d \
-            --name israelgpt-bot \
-            --restart unless-stopped \
-            --env-file .env \
-            -v /home/ubuntu/israelgpt/data:/app/data \
-            israelgpt-bot
-
-          echo "Starting new autobumper container..."
-          sudo docker run -d \
-            --name israelgpt-autobumper \
-            --restart unless-stopped \
-            --env-file .env \
-            israelgpt-bot \
-            bash -c 'cd autobumper && node index.js'
+          STATUS="${{ job.status }}"
+          if [ "$STATUS" = "success" ]; then
+            MSG="✅ IsraelGPT deployed successfully!"
+          else
+            MSG="❌ IsraelGPT deploy failed"
+          fi
+          echo "$MSG"

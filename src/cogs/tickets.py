@@ -1,3 +1,7 @@
+"""Ticket system cog."""
+
+from __future__ import annotations
+
 import os
 import sqlite3
 from datetime import datetime
@@ -5,11 +9,10 @@ from datetime import datetime
 import discord
 from discord.ext import commands
 
-
-MARKETPLACE_CHANNEL_ID = 1441901428800229376
-MARKETPLACE_STAFF_ROLE_IDS = [1441882323938316379, 1441878991370850335]
+from config import MARKETPLACE_CHANNEL_ID, MARKETPLACE_STAFF_ROLE_IDS
 
 
+# Database setup
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -80,17 +83,19 @@ def _marketplace_panel_exists(guild_id: int) -> bool:
 
 
 class TicketView(discord.ui.View):
-    """Generic ticket view used for all panels."""
+    """Persistent view for ticket panel buttons."""
 
     def __init__(self) -> None:
-        super().__init__(timeout=None)  # persistent view
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Open Ticket",
         style=discord.ButtonStyle.primary,
         custom_id="gems:ticket_panel_button",
     )
-    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def open_ticket(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         if interaction.guild is None or interaction.channel is None:
             await interaction.response.send_message(
                 "Nu, this only works in a server channel.",
@@ -118,7 +123,6 @@ class TicketView(discord.ui.View):
             type=discord.ChannelType.private_thread,
         )
 
-        # Add requesting user
         await thread.add_user(interaction.user)
 
         if panel["panel_type"] == "marketplace":
@@ -129,19 +133,17 @@ class TicketView(discord.ui.View):
                     for member in role.members:
                         staff_members.add(member)
 
-            # Add staff members with the given roles
             for member in staff_members:
                 try:
                     await thread.add_user(member)
                 except Exception:
                     pass
 
-            role_mentions: list[str] = []
-            for role_id in MARKETPLACE_STAFF_ROLE_IDS:
-                role = guild.get_role(role_id)
-                if role:
-                    role_mentions.append(role.mention)
-
+            role_mentions = [
+                guild.get_role(rid).mention
+                for rid in MARKETPLACE_STAFF_ROLE_IDS
+                if guild.get_role(rid)
+            ]
             mentions = " ".join(role_mentions)
 
             await thread.send(
@@ -168,8 +170,8 @@ class TicketView(discord.ui.View):
         )
 
 
+# Singleton view instance
 _ticket_view: TicketView | None = None
-_commands_registered: bool = False
 
 
 def _get_view() -> TicketView:
@@ -179,25 +181,18 @@ def _get_view() -> TicketView:
     return _ticket_view
 
 
-def register_ticket_view(bot: commands.Bot) -> None:
-    """Register the persistent view. Call from on_ready when loop is running."""
-    view = _get_view()
-    bot.add_view(view)
+class TicketsCog(commands.Cog, name="Tickets"):
+    """Ticket panel management."""
 
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        # Register persistent view
+        bot.add_view(_get_view())
 
-def setup_ticket_system(bot: commands.Bot) -> None:
-    """Register ticket-related commands. Safe to call multiple times."""
-
-    global _commands_registered
-    if _commands_registered:
-        return
-    _commands_registered = True
-
-    @bot.command(name="marketplacesetup")
+    @commands.command(name="marketplacesetup")
     @commands.has_permissions(manage_guild=True)
-    async def marketplacesetup(ctx: commands.Context):
-        """One-time setup for the marketplace listing panel."""
-
+    async def marketplacesetup(self, ctx: commands.Context):
+        """Set up the marketplace listing panel."""
         if _marketplace_panel_exists(ctx.guild.id):
             await ctx.send(
                 "Marketplace panel is already configured for this server, chaver.",
@@ -229,17 +224,14 @@ def setup_ticket_system(bot: commands.Bot) -> None:
         )
 
         if channel.id != ctx.channel.id:
-            await ctx.send(
-                f"Marketplace panel sent to {channel.mention}", delete_after=5,
-            )
+            await ctx.send(f"Marketplace panel sent to {channel.mention}", delete_after=5)
         else:
             await ctx.send("Marketplace panel deployed, sababa.", delete_after=5)
 
-    @bot.command(name="ticketsetup")
+    @commands.command(name="ticketsetup")
     @commands.has_permissions(manage_guild=True)
-    async def ticketsetup(ctx: commands.Context, handler: discord.Member):
-        """Create a generic ticket panel in the current channel for a specific handler user."""
-
+    async def ticketsetup(self, ctx: commands.Context, handler: discord.Member):
+        """Create a generic ticket panel for a specific handler."""
         channel = ctx.channel
 
         embed = discord.Embed(
@@ -267,3 +259,7 @@ def setup_ticket_system(bot: commands.Bot) -> None:
             f"Ticket panel created for {handler.mention} in {channel.mention}",
             delete_after=5,
         )
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(TicketsCog(bot))

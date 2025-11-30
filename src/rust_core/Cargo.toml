@@ -1,0 +1,18 @@
+[package]
+name = "israelgpt_core"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance Rust functions for IsraelGPT Discord bot"
+
+[lib]
+name = "israelgpt_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+regex = "1.10"
+dashmap = "5.5"
+
+[profile.release]
+lto = true
+opt-level = 3
