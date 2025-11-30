@@ -110,18 +110,22 @@ jobs:
           echo "✅ Deploy complete!"
 
     - name: Notify Discord
-      if: always() && secrets.DISCORD_WEBHOOK != ''
+      if: always()
       continue-on-error: true
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.EC2_HOST }}
-        username: ${{ secrets.EC2_USERNAME }}
-        key: ${{ secrets.EC2_SSH_KEY }}
-        script: |
+      env:
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+      run: |
+        if [ -n "$DISCORD_WEBHOOK" ]; then
           STATUS="${{ job.status }}"
+          COMMIT="${{ github.sha }}"
           if [ "$STATUS" = "success" ]; then
-            MSG="✅ IsraelGPT deployed successfully!"
+            COLOR=3066993
+            TITLE="✅ Deploy Successful"
           else
-            MSG="❌ IsraelGPT deploy failed"
+            COLOR=15158332
+            TITLE="❌ Deploy Failed"
           fi
-          echo "$MSG"
+          curl -s -H "Content-Type: application/json" \
+            -d "{\"embeds\":[{\"title\":\"$TITLE\",\"description\":\"Commit: \`${COMMIT:0:7}\`\",\"color\":$COLOR}]}" \
+            "$DISCORD_WEBHOOK"
+        fi
