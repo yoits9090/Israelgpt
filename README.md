@@ -44,7 +44,7 @@ A discord bot with a dash of chutzpah! This bot features basic moderation, auto-
 
 ## Setup
 
-### Prerequisites
+### Prerequisite\
 - Python 3.8+
 - A Discord Bot Token (from the [Discord Developer Portal](https://discord.com/developers/applications))
 
