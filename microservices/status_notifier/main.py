@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from urllib import request, error
 
@@ -51,7 +51,7 @@ def build_payload(args: argparse.Namespace) -> Dict:
         "title": _build_title(args.event, args.status),
         "description": "\n".join([p for p in description_parts if p]),
         "color": _status_color(args.status),
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
     if fields:
@@ -65,7 +65,10 @@ def send_webhook(webhook: str, payload: Dict) -> None:
     req = request.Request(
         webhook,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "IsraelGPT-StatusNotifier/1.0",
+        },
         method="POST",
     )
     try:
