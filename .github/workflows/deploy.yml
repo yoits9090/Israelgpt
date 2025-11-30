@@ -84,7 +84,7 @@ jobs:
           # Notify smoke test started
           cd ${{ env.DEPLOY_PATH }}
           if [ -n "${{ secrets.status }}" ]; then
-            STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+            STATUS_WEBHOOK="${{ secrets.status }}" python3 microservices/status_notifier/main.py \
               --event smoke_test \
               --status started \
               --summary "Testing new Docker image before deploy" \
@@ -98,11 +98,11 @@ jobs:
           echo "Testing imports..."
           if ! sudo docker run --rm -w /app/src \
             israelgpt-bot:${{ github.sha }} \
-            python -c "from cogs import setup_all_cogs; from core.bot import IsraelGPT; print('✅ Imports OK')"; then
+            python -c "from cogs import setup_all_cogs; from core.bot import bot; print('✅ Imports OK')"; then
             echo "❌ SMOKE TEST FAILED: Import errors detected"
             # Notify smoke test failed
             if [ -n "${{ secrets.status }}" ]; then
-              STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+              STATUS_WEBHOOK="${{ secrets.status }}" python3 microservices/status_notifier/main.py \
                 --event smoke_test \
                 --status failure \
                 --summary "Import errors detected - deploy aborted" \
@@ -133,7 +133,7 @@ jobs:
             sudo docker rm israelgpt-bot-test 2>/dev/null || true
             # Notify smoke test passed
             if [ -n "${{ secrets.status }}" ]; then
-              STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+              STATUS_WEBHOOK="${{ secrets.status }}" python3 microservices/status_notifier/main.py \
                 --event smoke_test \
                 --status success \
                 --summary "Container validated - proceeding with deploy" \
@@ -149,7 +149,7 @@ jobs:
             sudo docker rm israelgpt-bot-test 2>/dev/null || true
             # Notify smoke test failed
             if [ -n "${{ secrets.status }}" ]; then
-              STATUS_WEBHOOK="${{ secrets.status }}" python microservices/status_notifier/main.py \
+              STATUS_WEBHOOK="${{ secrets.status }}" python3 microservices/status_notifier/main.py \
                 --event smoke_test \
                 --status failure \
                 --summary "Container crashed on startup - deploy aborted" \
