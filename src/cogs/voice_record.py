@@ -1,4 +1,4 @@
-"""Voice recording cog - auto-join VCs, silently record and transcribe."""
+"""Voice recording cog (auto-join disabled, database support retained)."""
 
 import asyncio
 import io
@@ -52,7 +52,7 @@ class AudioSink(voice_recv.AudioSink):
 
 
 class VoiceRecordCog(commands.Cog):
-    """Automatic voice recording - joins VCs silently and transcribes."""
+    """Automatic voice recording (joining disabled; database hooks intact)."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -61,9 +61,12 @@ class VoiceRecordCog(commands.Cog):
         self.voice_clients: Dict[int, voice_recv.VoiceRecvClient] = {}  # channel_id -> vc
         self.user_names: Dict[int, str] = {}
         self.ignored_channels: Set[int] = set()  # Channels to not auto-join
+        self.enabled = False
 
     async def _start_recording(self, channel: discord.VoiceChannel):
         """Silently join a voice channel and start recording."""
+        if not self.enabled:
+            return
         channel_id = channel.id
         guild_id = channel.guild.id
 
@@ -102,6 +105,8 @@ class VoiceRecordCog(commands.Cog):
 
     async def _stop_recording(self, channel_id: int, guild_id: int):
         """Stop recording and leave the channel."""
+        if not self.enabled:
+            return
         # Cancel transcription task
         if channel_id in self.recording_tasks:
             self.recording_tasks[channel_id].cancel()
@@ -181,30 +186,8 @@ class VoiceRecordCog(commands.Cog):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ):
-        """Auto-join when users join VC, leave when empty."""
-        # Ignore bot's own state changes
-        if member.bot:
-            return
-
-        # User joined a channel
-        if after.channel and after.channel.id not in self.ignored_channels:
-            self.user_names[member.id] = member.display_name
-            
-            # If not already recording and has users, join
-            if after.channel.id not in self.active_sinks:
-                if self._get_human_count(after.channel) >= 1:
-                    await asyncio.sleep(2)  # Small delay before joining
-                    await self._start_recording(after.channel)
-
-        # User left a channel
-        if before.channel:
-            channel_id = before.channel.id
-            guild_id = before.channel.guild.id
-
-            # If we're recording and no humans left, leave
-            if channel_id in self.active_sinks:
-                if self._get_human_count(before.channel) == 0:
-                    await self._stop_recording(channel_id, guild_id)
+        """Voice recording is disabled; ignore events."""
+        return
 
 
 async def setup(bot: commands.Bot):
