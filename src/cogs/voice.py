@@ -1,20 +1,14 @@
-"""Voice channel management cog (private VCs, monitoring)."""
+"""Voice channel management cog (private VCs; monitoring disabled)."""
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Dict, Optional
 
 import discord
 from discord.ext import commands
 
-from config import (
-    get_voice_channel_ids,
-    get_private_voice_lobby_id,
-    VOICE_TRANSCRIBE_INTERVAL,
-)
+from config import get_private_voice_lobby_id
 
 
 @dataclass
@@ -26,80 +20,11 @@ class PrivateVoiceSession:
     role_id: int
 
 
-class VoiceMonitor:
-    """Monitors a voice channel for transcription (placeholder for future audio capture)."""
-
-    def __init__(self, channel: discord.VoiceChannel, bot: commands.Bot):
-        self.channel = channel
-        self.bot = bot
-        self.voice_client: Optional[discord.VoiceClient] = None
-        self.task: Optional[asyncio.Task] = None
-        self._running = False
-        self._warned_unavailable = False
-
-    async def ensure_running(self):
-        await self._connect()
-        if not self._running:
-            self._running = True
-            self.task = self.bot.loop.create_task(self._transcription_loop())
-
-    async def _connect(self):
-        guild = self.channel.guild
-        if guild is None:
-            return
-
-        client = guild.voice_client
-        if client is None:
-            try:
-                client = await self.channel.connect()
-            except Exception as e:
-                print(f"Failed to join voice channel {self.channel.id}: {e}")
-                return
-        elif client.channel != self.channel:
-            try:
-                await client.move_to(self.channel)
-            except Exception as e:
-                print(f"Failed to move to monitored channel {self.channel.id}: {e}")
-                return
-
-        self.voice_client = client
-
-    async def _transcription_loop(self):
-        while self._running:
-            start_time = datetime.utcnow()
-            participants = [m.id for m in self.channel.members if not m.bot]
-
-            # discord.py does not provide voice receive primitives
-            if not self._warned_unavailable:
-                print(
-                    "Voice receive is unavailable in discord.py; "
-                    "capturing participant snapshot without audio."
-                )
-                self._warned_unavailable = True
-
-            # Future: record_segment(...) call here
-
-            await asyncio.sleep(VOICE_TRANSCRIBE_INTERVAL)
-
-    async def stop(self):
-        self._running = False
-        if self.task:
-            self.task.cancel()
-        if self.voice_client and self.voice_client.is_connected():
-            if self.voice_client.is_playing():
-                return
-            try:
-                await self.voice_client.disconnect()
-            except Exception as e:
-                print(f"Failed to disconnect monitor client: {e}")
-
-
 class VoiceCog(commands.Cog, name="Voice"):
-    """Private voice channels and voice monitoring."""
+    """Private voice channels with monitoring disabled."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.voice_monitors: Dict[int, VoiceMonitor] = {}
         self.private_voice_by_owner: Dict[int, PrivateVoiceSession] = {}
         self.private_voice_by_channel: Dict[int, int] = {}
 
@@ -228,30 +153,6 @@ class VoiceCog(commands.Cog, name="Voice"):
 
         self._unregister_session(session.owner_id)
 
-    # --- Voice monitor management ---
-
-    async def _ensure_voice_monitor(self, channel: discord.VoiceChannel):
-        monitor = self.voice_monitors.get(channel.id)
-        if monitor is None:
-            monitor = VoiceMonitor(channel, self.bot)
-            self.voice_monitors[channel.id] = monitor
-        else:
-            monitor.channel = channel
-
-        await monitor.ensure_running()
-
-    async def _stop_monitor_if_empty(self, channel: discord.VoiceChannel):
-        monitor = self.voice_monitors.get(channel.id)
-        if monitor is None:
-            return
-
-        non_bot_members = [m for m in channel.members if not m.bot]
-        if non_bot_members:
-            return
-
-        await monitor.stop()
-        self.voice_monitors.pop(channel.id, None)
-
     # --- Event listener ---
 
     @commands.Cog.listener()
@@ -269,17 +170,6 @@ class VoiceCog(commands.Cog, name="Voice"):
             and not member.bot
         ):
             await self._ensure_private_voice(member, after_channel)
-
-        configured_voice_channels = get_voice_channel_ids(member.guild)
-        if after_channel and after_channel.id in configured_voice_channels and not member.bot:
-            await self._ensure_voice_monitor(after_channel)
-
-        if (
-            before_channel
-            and before_channel.id in configured_voice_channels
-            and (after_channel is None or after_channel.id != before_channel.id)
-        ):
-            await self._stop_monitor_if_empty(before_channel)
 
         if before_channel and self._get_session_by_channel(before_channel.id):
             await self._cleanup_private_voice(before_channel)
