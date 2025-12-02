@@ -75,6 +75,12 @@ def send_webhook(webhook: str, payload: Dict) -> None:
         with request.urlopen(req) as resp:  # noqa: S310 (Discord webhook)
             if resp.status >= 300:
                 raise RuntimeError(f"Webhook responded with status {resp.status}")
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            # Gracefully handle deleted/invalid webhooks so the notifier doesn't crash
+            print("Webhook returned 404 (not found); skipping notification.")
+            return
+        raise RuntimeError(f"Failed to send webhook: {exc}") from exc
     except error.URLError as exc:
         raise RuntimeError(f"Failed to send webhook: {exc}") from exc
 
