@@ -66,12 +66,7 @@ jobs:
           echo "DISCORDBUMP_TOKEN=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
           echo "token=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
           
-          # Grafana Cloud metrics (optional)
-          if [ -n "${{ secrets.GRAFANA_REMOTE_WRITE_URL }}" ]; then
-            echo "GRAFANA_REMOTE_WRITE_URL=${{ secrets.GRAFANA_REMOTE_WRITE_URL }}" >> .env
-            echo "GRAFANA_METRICS_USER=${{ secrets.GRAFANA_METRICS_USER }}" >> .env
-            echo "GRAFANA_API_KEY=${{ secrets.GRAFANA_API_KEY }}" >> .env
-          fi
+          # Note: Grafana secrets passed directly to grafana-agent container (not in .env)
 
           # Ensure data directory exists
           mkdir -p ${{ env.DEPLOY_PATH }}/data
@@ -183,7 +178,9 @@ jobs:
               --name grafana-agent \
               --network israelgpt-net \
               --restart unless-stopped \
-              --env-file .env \
+              -e "GRAFANA_REMOTE_WRITE_URL=${{ secrets.GRAFANA_REMOTE_WRITE_URL }}" \
+              -e "GRAFANA_METRICS_USER=${{ secrets.GRAFANA_METRICS_USER }}" \
+              -e "GRAFANA_API_KEY=${{ secrets.GRAFANA_API_KEY }}" \
               --memory=64m \
               --log-opt max-size=5m \
               --log-opt max-file=2 \
