@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 import discord
@@ -15,6 +16,7 @@ from services import send_audit_log, grant_gem_role, mentions_gem_phrase
 from services.audit import send_flagged_message_report
 from services.llm import generate_israeli_reply, classify_message_safety, fetch_channel_context, get_active_users_context
 from utils import truncate
+from observability import count_message, count_command, count_error, count_spam, observe_command_duration
 
 from .activity import ActivityTracker
 
@@ -122,6 +124,7 @@ def setup_events(bot: commands.Bot) -> None:
             return
 
         try:
+            count_message(message.guild.id if message.guild else None)
             # Log message for audit
             if message.guild is not None:
                 log_audit_message(
@@ -141,6 +144,7 @@ def setup_events(bot: commands.Bot) -> None:
             spam_handled = False
             if is_spam:
                 spam_handled = True
+                count_spam(message.guild.id if message.guild else None)
                 try:
                     await message.delete()
                     if count == 21:  # Only warn once
@@ -247,6 +251,7 @@ def setup_events(bot: commands.Bot) -> None:
 
         except Exception as e:
             print(f"on_message pipeline failed: {e}")
+            count_error("on_message")
 
         await bot.process_commands(message)
 
@@ -305,3 +310,20 @@ def setup_events(bot: commands.Bot) -> None:
             await ctx.send("Nu? You forgot something in the command.")
         else:
             print(f"Error: {error}")
+
+        count_error("command_error")
+
+    @bot.event
+    async def on_command(ctx: commands.Context):
+        ctx._cmd_start_time = time.perf_counter()
+
+    @bot.event
+    async def on_command_completion(ctx: commands.Context):
+        guild_id = ctx.guild.id if ctx.guild else None
+        command_name = ctx.command.qualified_name if ctx.command else "unknown"
+        count_command(guild_id, command_name)
+
+        start = getattr(ctx, "_cmd_start_time", None)
+        if start is not None:
+            duration = time.perf_counter() - start
+            observe_command_duration(guild_id, command_name, duration)

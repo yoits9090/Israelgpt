@@ -19,9 +19,10 @@ Directory Structure:
 import asyncio
 import sys
 
-from config import TOKEN
+from config import TOKEN, METRICS_PORT
 from core import bot, setup_events
 from cogs import setup_all_cogs
+from observability import start_metrics_server
 
 
 async def main():
@@ -29,6 +30,9 @@ async def main():
     if not TOKEN:
         print("Error: DISCORD_TOKEN not found in .env")
         sys.exit(1)
+
+    # Start Prometheus metrics server (runs in background thread)
+    start_metrics_server(METRICS_PORT)
 
     # Setup event handlers
     setup_events(bot)

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import Optional, Dict, List, Tuple
 
 import discord
 
 from db.llm import log_message, get_recent_conversation
+from observability import count_llm_request, observe_llm_duration
 from .client import get_client
 
 # URL regex for truncating links
@@ -29,19 +31,29 @@ def _call_groq_sync(messages: list[Dict[str, str]]) -> Optional[str]:
     """Synchronous Groq chat completion call."""
     client = get_client()
     if client is None:
+        count_llm_request(model="unknown", status="no_client")
         return None
 
+    model_name = "llama-3.1-8b-instant"
+    start = time.perf_counter()
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=model_name,
             messages=messages,
             max_tokens=512,
             temperature=0.7,
         )
+        duration = time.perf_counter() - start
+        observe_llm_duration(model_name, duration)
         message = completion.choices[0].message
-        return message.content if message and message.content else None
+        content = message.content if message and message.content else None
+        count_llm_request(model=model_name, status="success" if content else "empty")
+        return content
     except Exception as e:
+        duration = time.perf_counter() - start
+        observe_llm_duration(model_name, duration)
         print(f"Groq LLM error: {e}")
+        count_llm_request(model=model_name, status="error")
         return None
 
 

@@ -34,6 +34,14 @@ Set these in `.env`:
 - `DISCORD_TOKEN` — Bot token from [Discord Developer Portal](https://discord.com/developers/applications)
 - `AUTO_ROLE_ID` — Role assigned on member join
 - `PRIMARY_GUILD_ID` — Main server ID
+- `METRICS_PORT` — Port for Prometheus `/metrics` endpoint (default `8000`)
+
+## Monitoring
+
+- Prometheus metrics are exposed on `http://<host>:METRICS_PORT/metrics`.
+- Default port is `8000`; change via `METRICS_PORT` env var.
+- In Docker, port `8000` is exposed (map it with `-p 8000:8000` or your chosen port).
+- Counters include messages, commands, spam detections, errors, and LLM requests.
 
 ## Contributing
 

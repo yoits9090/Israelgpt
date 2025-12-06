@@ -62,4 +62,7 @@ COPY . .
 # Create data directory
 RUN mkdir -p /app/data
 
+# Expose Prometheus metrics port (configure via METRICS_PORT)
+EXPOSE 8000
+
 CMD ["python", "src/main.py"]

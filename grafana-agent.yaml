@@ -1,0 +1,25 @@
+# Grafana Agent configuration for Prometheus metrics
+# Scrapes the bot's /metrics endpoint and pushes to Grafana Cloud
+
+server:
+  log_level: warn
+
+metrics:
+  global:
+    scrape_interval: 15s
+    external_labels:
+      app: israelgpt
+      env: production
+  configs:
+    - name: israelgpt
+      scrape_configs:
+        - job_name: israelgpt_bot
+          static_configs:
+            - targets: ['israelgpt-bot:8000']
+              labels:
+                instance: ec2
+      remote_write:
+        - url: ${GRAFANA_REMOTE_WRITE_URL}
+          basic_auth:
+            username: ${GRAFANA_METRICS_USER}
+            password: ${GRAFANA_API_KEY}
