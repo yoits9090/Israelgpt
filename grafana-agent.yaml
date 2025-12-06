@@ -19,7 +19,7 @@ metrics:
               labels:
                 instance: ec2
       remote_write:
-        - url: ${GRAFANA_REMOTE_WRITE_URL}
+        - url: "${GRAFANA_REMOTE_WRITE_URL}"
           basic_auth:
-            username: ${GRAFANA_METRICS_USER}
-            password: ${GRAFANA_API_KEY}
+            username: "${GRAFANA_METRICS_USER}"
+            password: "${GRAFANA_API_KEY}"
