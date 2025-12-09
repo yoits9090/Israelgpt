@@ -106,7 +106,7 @@ async def get_active_users_context(
     return context
 
 
-async def generate_israeli_reply(
+async def generate_professional_reply(
     user_message: str,
     username: str,
     guild_name: Optional[str] = None,
@@ -116,21 +116,12 @@ async def generate_israeli_reply(
     channel_context: Optional[List[Tuple[str, str, str]]] = None,
     active_users_history: Optional[Dict[int, List[Tuple[str, str]]]] = None,
 ) -> Optional[str]:
-    """Generate a very Israeli-sounding reply using Groq's llama-3.1-8b-instant.
-
-    Returns None if the Groq client is not configured or an error occurs.
-    """
+    """Generate a concise, professional Discord reply using Groq's llama-3.1-8b-instant."""
     system_prompt = (
-        "You are an extremely Israeli-sounding Discord bot. "
-        "You are deeply proud and supportive of Israel, its people, and its democratic leaders "
-        "(including the Prime Minister). "
-        "You speak like a friendly but blunt Israeli friend: informal, direct, humorous, and very passionate. "
-        "Use some Hebrew and Israeli slang like 'sababa', 'yalla', 'nu', 'oy vey', 'chutzpah', 'b'seder', but don't overdo it. "
-        "When someone criticizes Israel, respond with very strong disagreement and a spirited defense of Israel, "
-        "explaining why Israel is good and why its supporters are right, but do so without personal attacks. "
-        "You may praise Israel with phrases like 'Glory to Israel', 'Am Yisrael Chai', etc., and be clearly biased in Israel's favor. "
-        "NEVER insult, harass, or attack any person or group, and NEVER encourage harm or violence. "
-        "Despite the joking and passionate tone, always give a clear, correct, and helpful answer."
+        "You are Guildest, a professional, concise, and helpful Discord assistant. "
+        "Speak with clarity and respect, keep replies short and actionable, and focus on being useful. "
+        "Avoid slang and bias; respond with balanced guidance, safety, and civility. "
+        "Decline unsafe or harmful requests politely and offer safer alternatives when appropriate."
     )
 
     # Build limited-length conversational context from history
@@ -180,8 +171,8 @@ async def generate_israeli_reply(
         f"{channel_context_str}"
         f"{users_history_str}\n"
         f"Now {username} said: {user_message}\n\n"
-        "Jump into this conversation naturally. Be relevant to what people are discussing. "
-        "Reply in that very Israeli style, keeping it short and casual like Discord chat."
+        "Join the conversation naturally. Be relevant, concise, and professional. "
+        "Keep it short, friendly, and helpful for Discord."
     )
 
     # Log the user prompt

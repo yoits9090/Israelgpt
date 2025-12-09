@@ -1,25 +1,22 @@
 """Voice transcription database storage."""
 
-import os
-import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
-from dataclasses import dataclass
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
+from .engine import get_connection, using_postgres
 
-DB_PATH = os.path.join(DATA_DIR, "transcriptions.db")
-
-_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-_conn.row_factory = sqlite3.Row
+_conn = get_connection("transcriptions.db")
 _cursor = _conn.cursor()
+_IS_POSTGRES = using_postgres()
 
 # Create tables
-_cursor.execute("""
+_ID_COLUMN = "id SERIAL PRIMARY KEY" if _IS_POSTGRES else "id INTEGER PRIMARY KEY AUTOINCREMENT"
+
+_cursor.execute(
+    f"""
 CREATE TABLE IF NOT EXISTS transcriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    {_ID_COLUMN},
     guild_id INTEGER NOT NULL,
     channel_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -28,18 +25,21 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     duration_secs REAL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
-""")
+"""
+)
 
-_cursor.execute("""
+_cursor.execute(
+    f"""
 CREATE TABLE IF NOT EXISTS voice_sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    {_ID_COLUMN},
     guild_id INTEGER NOT NULL,
     channel_id INTEGER NOT NULL,
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ended_at TIMESTAMP,
     total_transcriptions INTEGER DEFAULT 0
 )
-""")
+"""
+)
 
 _cursor.execute("CREATE INDEX IF NOT EXISTS idx_transcriptions_guild ON transcriptions(guild_id)")
 _cursor.execute("CREATE INDEX IF NOT EXISTS idx_transcriptions_user ON transcriptions(user_id)")

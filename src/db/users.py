@@ -1,16 +1,9 @@
-import os
-import sqlite3
 from datetime import datetime
 from typing import Optional, Dict
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
+from .engine import get_connection
 
-DB_PATH = os.path.join(DATA_DIR, "users.db")
-
-_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-_conn.row_factory = sqlite3.Row
+_conn = get_connection("users.db")
 
 _conn.execute(
     """

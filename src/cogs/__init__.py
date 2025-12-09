@@ -1,4 +1,4 @@
-"""Discord.py Cogs for IsraelGPT commands."""
+"""Discord.py Cogs for Guildest commands."""
 
 from .moderation import ModerationCog
 from .community import CommunityCog

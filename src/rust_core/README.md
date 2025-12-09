@@ -1,6 +1,6 @@
-# IsraelGPT Rust Core
+# Guildest Rust Core
 
-High-performance Rust extension for IsraelGPT Discord bot.
+High-performance Rust extension for the Guildest Discord bot.
 
 ## Overview
 
@@ -39,7 +39,7 @@ The wheel will be in `target/wheels/`.
 After building:
 
 ```bash
-pip install target/wheels/israelgpt_core-*.whl
+pip install target/wheels/guildest_core-*.whl
 ```
 
 Or for development:
@@ -55,14 +55,14 @@ The Python code automatically uses Rust functions when available:
 ```python
 # In utils/helpers.py - falls back to Python if Rust not available
 try:
-    from israelgpt_core import truncate, parse_duration_secs, text_contains_phrase
+    from guildest_core import truncate, parse_duration_secs, text_contains_phrase
     _USE_RUST = True
 except ImportError:
     _USE_RUST = False
 
 # In core/activity.py
 try:
-    from israelgpt_core import ActivityTrackerRust
+    from guildest_core import ActivityTrackerRust
     _USE_RUST = True
 except ImportError:
     _USE_RUST = False

@@ -65,4 +65,6 @@ RUN mkdir -p /app/data
 # Expose Prometheus metrics port (configure via METRICS_PORT)
 EXPOSE 8000
 
-CMD ["python", "src/main.py"]
+ENV SERVICE=gateway
+
+CMD ["sh", "-c", "if [ \"$SERVICE\" = \"worker\" ]; then python microservices/worker/main.py; elif [ \"$SERVICE\" = \"command-gateway\" ]; then python microservices/command_gateway/main.py; else python src/main.py; fi"]

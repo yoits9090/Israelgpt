@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime
 
@@ -14,11 +15,15 @@ from db.users import record_message
 from db.audit import log_message as log_audit_message, get_message as get_logged_message, record_deletion
 from services import send_audit_log, grant_gem_role, mentions_gem_phrase
 from services.audit import send_flagged_message_report
-from services.llm import generate_israeli_reply, classify_message_safety, fetch_channel_context, get_active_users_context
+from services.llm import fetch_channel_context
+from taskqueue import get_task_queue
 from utils import truncate
 from observability import count_message, count_command, count_error, count_spam, observe_command_duration
 
 from .activity import ActivityTracker
+
+
+task_queue = get_task_queue()
 
 
 async def _find_message_deleter(message: discord.Message) -> discord.abc.User | None:
@@ -51,17 +56,78 @@ async def _find_message_deleter(message: discord.Message) -> discord.abc.User | 
     return None
 
 
-async def _scan_message_safety(message: discord.Message) -> None:
-    """Scan a message for safety violations."""
+async def _queue_message_safety(message: discord.Message) -> None:
+    """Scan a message for safety violations via the worker queue."""
     if not message.content:
         return
 
-    verdict = await classify_message_safety(message.content)
-    if verdict is None:
+    job = None
+    try:
+        job = await task_queue.enqueue(
+            "safety_scan",
+            {
+                "content": message.content,
+                "guild_id": message.guild.id if message.guild else None,
+                "channel_id": message.channel.id if message.channel else None,
+                "author_id": message.author.id if message.author else None,
+            },
+            requested_by=getattr(message.author, "id", None),
+            result_ttl=90,
+        )
+        verdict = await task_queue.wait_for_result(job.job_id, timeout=30)
+        if verdict is None:
+            return
+        if str(verdict.get("verdict", "safe")).lower() != "safe":
+            await send_flagged_message_report(message, verdict)
+    except asyncio.TimeoutError:
+        job_id = job.job_id if job else "unknown"
+        print(f"Safety scan timed out for job {job_id}")
+    except Exception as exc:
+        print(f"Safety scan failed: {exc}")
+
+
+async def _queue_llm_reply(
+    message: discord.Message,
+    prompt: str,
+    channel_context,
+    active_user_ids,
+    *,
+    reply_to_message: bool = False,
+) -> None:
+    """Request an LLM reply via the worker queue and send it back to Discord."""
+    if not prompt:
         return
 
-    if str(verdict.get("verdict", "safe")).lower() != "safe":
-        await send_flagged_message_report(message, verdict)
+    job = None
+    try:
+        job = await task_queue.enqueue(
+            "llm_reply",
+            {
+                "prompt": prompt,
+                "username": message.author.display_name,
+                "guild_name": message.guild.name if message.guild else None,
+                "guild_id": message.guild.id if message.guild else None,
+                "user_id": message.author.id,
+                "channel_id": message.channel.id,
+                "channel_context": channel_context,
+                "active_user_ids": active_user_ids,
+            },
+            requested_by=getattr(message.author, "id", None),
+            result_ttl=180,
+        )
+        result = await task_queue.wait_for_result(job.job_id, timeout=75)
+        reply_text = (result or {}).get("reply")
+        if not reply_text:
+            return
+        if reply_to_message:
+            await message.reply(reply_text)
+        else:
+            await message.channel.send(reply_text)
+    except asyncio.TimeoutError:
+        job_id = job.job_id if job else "unknown"
+        print(f"LLM reply timed out for job {job_id}")
+    except Exception as exc:
+        print(f"LLM reply failed: {exc}")
 
 
 def setup_events(bot: commands.Bot) -> None:
@@ -72,8 +138,8 @@ def setup_events(bot: commands.Bot) -> None:
 
     @bot.event
     async def on_ready():
-        print(f"{bot.user} has arrived! Shalom everyone!")
-        await bot.change_presence(activity=discord.Game(name="Backgammon (Shesh Besh)"))
+        print(f"{bot.user} is online.")
+        await bot.change_presence(activity=discord.Game(name="Supporting the guild"))
 
         # Sync hybrid commands -> application commands once on startup
         if not getattr(bot, "_slash_synced", False):
@@ -107,7 +173,7 @@ def setup_events(bot: commands.Bot) -> None:
         # Welcome Message
         channel = member.guild.system_channel
         if channel:
-            await channel.send(f"What's up! Welcome to Gems! {member.mention}")
+            await channel.send(f"Welcome to the server, {member.mention}!")
 
     @bot.event
     async def on_presence_update(before: discord.Member, after: discord.Member):
@@ -149,7 +215,7 @@ def setup_events(bot: commands.Bot) -> None:
                     await message.delete()
                     if count == 21:  # Only warn once
                         await message.channel.send(
-                            f"Oy vey {message.author.mention}, slow down! Anti-spam triggered.",
+                            f"Please slow down {message.author.mention}; anti-spam triggered.",
                             delete_after=5,
                         )
                 except Exception as e:
@@ -157,7 +223,7 @@ def setup_events(bot: commands.Bot) -> None:
 
             # Safety scan (async background task)
             if message.guild is not None:
-                bot.loop.create_task(_scan_message_safety(message))
+                bot.loop.create_task(_queue_message_safety(message))
 
             # Leveling and XP
             if not spam_handled and message.guild is not None:
@@ -170,13 +236,13 @@ def setup_events(bot: commands.Bot) -> None:
 
                 if leveled_up:
                     await message.channel.send(
-                        f"Mazel tov {message.author.mention}! You leveled up to level {level}! 🎉"
+                        f"Great job {message.author.mention}! You leveled up to level {level}! 🎉"
                     )
 
                 if messages == 150:
                     await grant_gem_role(message.author, trigger="reaching 150 messages")
                     await message.channel.send(
-                        f"Sababa! {message.author.mention} reached 150 messages and earned the Gem role! 💎"
+                        f"{message.author.mention} reached 150 messages and earned the Gem role! 💎"
                     )
 
             # Active chat detection (high frequency - uses Rust when available)
@@ -192,31 +258,18 @@ def setup_events(bot: commands.Bot) -> None:
                     try:
                         # Fetch channel context (last 30 messages, truncate links)
                         channel_context = await fetch_channel_context(message.channel, limit=30)
-                        
-                        # Get unique user IDs from recent chat
-                        active_user_ids = list(set(
-                            int(uid) for _, uid, _ in channel_context
-                        ))[:10]
-                        
-                        # Fetch those users' previous conversations with the bot
-                        users_history = await get_active_users_context(
-                            guild_id=message.guild.id,
-                            user_ids=active_user_ids,
-                            max_per_user=5,
+                        active_user_ids = list(
+                            set(int(uid) for _, uid, _ in channel_context)
+                        )[:10]
+
+                        bot.loop.create_task(
+                            _queue_llm_reply(
+                                message,
+                                prompt,
+                                channel_context,
+                                active_user_ids,
+                            )
                         )
-                        
-                        reply = await generate_israeli_reply(
-                            user_message=prompt,
-                            username=message.author.display_name,
-                            guild_name=message.guild.name if message.guild else None,
-                            guild_id=message.guild.id if message.guild else None,
-                            user_id=message.author.id,
-                            channel_id=message.channel.id,
-                            channel_context=channel_context,
-                            active_users_history=users_history,
-                        )
-                        if reply:
-                            await message.channel.send(reply)
                     except Exception as e:
                         print(f"Active chat reply failed: {e}")
 
@@ -236,16 +289,16 @@ def setup_events(bot: commands.Bot) -> None:
                     content = "Say something helpful and friendly."
 
                 try:
-                    reply = await generate_israeli_reply(
-                        user_message=content,
-                        username=message.author.display_name,
-                        guild_name=message.guild.name if message.guild else None,
-                        guild_id=message.guild.id if message.guild else None,
-                        user_id=message.author.id,
-                        channel_id=message.channel.id,
+                    channel_context = await fetch_channel_context(message.channel, limit=25)
+                    bot.loop.create_task(
+                        _queue_llm_reply(
+                            message,
+                            content,
+                            channel_context,
+                            [message.author.id],
+                            reply_to_message=True,
+                        )
                     )
-                    if reply:
-                        await message.reply(reply)
                 except Exception as e:
                     print(f"Mention reply failed: {e}")
 

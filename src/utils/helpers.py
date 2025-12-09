@@ -12,7 +12,7 @@ from typing import Optional
 
 # Try to import Rust-accelerated versions
 try:
-    from israelgpt_core import (
+    from guildest_core import (
         truncate as _rust_truncate,
         parse_duration_secs as _rust_parse_duration_secs,
         text_contains_phrase as _rust_text_contains_phrase,

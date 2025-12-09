@@ -8,8 +8,9 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
-DB_PATH = Path("data/economy.db")
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+from .engine import get_connection as get_db_connection, get_db_path
+
+DB_PATH = get_db_path("economy.db")
 
 
 class ClassTier(Enum):
@@ -150,9 +151,13 @@ class HistoryEvent:
     created_at: Optional[datetime] = None
 
 
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+def get_connection():
+    conn = get_db_connection("economy.db")
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+    except Exception:
+        # Postgres or drivers that do not support PRAGMA
+        pass
     return conn
 
 

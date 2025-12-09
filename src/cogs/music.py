@@ -111,7 +111,7 @@ class MusicCog(commands.Cog, name="Music"):
                     ctx.voice_client.play(source, after=lambda e: self._play_next(ctx))
                     await ctx.send(f"Now playing: **{title}** 🎵")
         except Exception as e:
-            await ctx.send(f"Oy vey, error playing audio: {e}")
+            await ctx.send(f"Unable to play audio: {e}")
 
     @commands.hybrid_command(name="pause")
     async def pause(self, ctx: commands.Context):
@@ -120,7 +120,7 @@ class MusicCog(commands.Cog, name="Music"):
             ctx.voice_client.pause()
             await ctx.send("Paused the music, hold on...")
         else:
-            await ctx.send("Nothing is playing, chaver!")
+            await ctx.send("Nothing is playing right now.")
 
     @commands.hybrid_command(name="resume")
     async def resume(self, ctx: commands.Context):
@@ -158,7 +158,7 @@ class MusicCog(commands.Cog, name="Music"):
             if ctx.guild.id in self.music_queue:
                 self.music_queue[ctx.guild.id].clear()
             await ctx.voice_client.disconnect()
-            await ctx.send("Shalom, I'm leaving!")
+            await ctx.send("Leaving the voice channel.")
         else:
             await ctx.send("I'm not in a voice channel, bubbeleh!")
 

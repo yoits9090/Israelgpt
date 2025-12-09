@@ -183,7 +183,7 @@ class VoiceCog(commands.Cog, name="Voice"):
             return
 
         if member is None:
-            await ctx.send("Mention who you want to invite to your private VC, chaver.")
+            await ctx.send("Mention who you want to invite to your private VC.")
             return
 
         if member.bot:

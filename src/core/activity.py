@@ -15,7 +15,7 @@ import discord
 
 # Try to import Rust-accelerated tracker
 try:
-    from israelgpt_core import ActivityTrackerRust
+    from guildest_core import ActivityTrackerRust
     _USE_RUST = True
 except ImportError:
     _USE_RUST = False

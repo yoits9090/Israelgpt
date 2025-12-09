@@ -1,15 +1,8 @@
-import os
-import sqlite3
 from typing import List, Tuple, Dict
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
+from .engine import get_connection
 
-DB_PATH = os.path.join(DATA_DIR, "levels.db")
-
-_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-_conn.row_factory = sqlite3.Row
+_conn = get_connection("levels.db")
 
 _conn.execute(
     """
@@ -78,7 +71,7 @@ def get_user_stats(guild_id: int, user_id: int) -> Dict[str, int]:
     return {"messages": row["messages"], "xp": row["xp"], "level": row["level"]}
 
 
-def get_top_users(guild_id: int, limit: int = 10) -> List[sqlite3.Row]:
+def get_top_users(guild_id: int, limit: int = 10) -> List[Dict]:
     cur = _conn.execute(
         """
         SELECT user_id, messages, xp, level
@@ -89,4 +82,5 @@ def get_top_users(guild_id: int, limit: int = 10) -> List[sqlite3.Row]:
         """,
         (guild_id, limit),
     )
-    return list(cur.fetchall())
+    rows = cur.fetchall()
+    return [dict(row) for row in rows]

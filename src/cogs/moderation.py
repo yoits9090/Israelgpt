@@ -23,7 +23,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         try:
             await member.ban(reason=reason)
             await ctx.send(
-                f"Oy vey! {member.mention} has been banned!\n"
+                f"{member.mention} has been banned.\n"
                 f"Reason: {reason if reason else 'No reason given'}"
             )
         except Exception as e:
@@ -65,7 +65,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
             return
 
         if target == ctx.author:
-            await ctx.send("You can't mute yourself, chaver!")
+            await ctx.send("You can't mute yourself.")
             return
 
         if duration is None:
@@ -134,7 +134,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
                 await member.add_roles(role)
                 await ctx.send(f"Added {role.name} to {member.mention}")
         except discord.Forbidden:
-            await ctx.send("Oy vey! I don't have permission to manage that role, chaver!")
+            await ctx.send("I don't have permission to manage that role.")
         except Exception as e:
             await ctx.send(f"Nu? Something went wrong: {e}")
 
@@ -156,7 +156,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         try:
             await ctx.channel.edit(slowmode_delay=seconds)
             if seconds == 0:
-                await ctx.send("Slowmode disabled. Keep it civil, chaverim!")
+                await ctx.send("Slowmode disabled. Please keep the chat civil.")
             else:
                 await ctx.send(f"Slowmode updated to {seconds} seconds. Breathe and type slowly.")
         except discord.Forbidden:

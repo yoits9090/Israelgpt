@@ -147,7 +147,7 @@ class TicketView(discord.ui.View):
             mentions = " ".join(role_mentions)
 
             await thread.send(
-                f"Shalom {interaction.user.mention}! This is your marketplace listing ticket.\n"
+                f"Hello {interaction.user.mention}! This is your marketplace listing ticket.\n"
                 f"{mentions} please take a look when you're free."
             )
         else:
@@ -160,7 +160,7 @@ class TicketView(discord.ui.View):
                     pass
 
             await thread.send(
-                f"Shalom {interaction.user.mention}! This is your ticket."
+                f"Hello {interaction.user.mention}! This is your ticket."
                 + (f" {handler.mention} will help you soon." if handler is not None else "")
             )
 
@@ -195,7 +195,7 @@ class TicketsCog(commands.Cog, name="Tickets"):
         """Set up the marketplace listing panel."""
         if _marketplace_panel_exists(ctx.guild.id):
             await ctx.send(
-                "Marketplace panel is already configured for this server, chaver.",
+                "Marketplace panel is already configured for this server.",
                 delete_after=10,
             )
             return

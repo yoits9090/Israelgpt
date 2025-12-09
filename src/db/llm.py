@@ -1,16 +1,9 @@
-import os
-import sqlite3
 from datetime import datetime
 from typing import List, Tuple
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
+from .engine import get_connection
 
-DB_PATH = os.path.join(DATA_DIR, "llm.db")
-
-_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-_conn.row_factory = sqlite3.Row
+_conn = get_connection("llm.db")
 
 _conn.execute(
     """

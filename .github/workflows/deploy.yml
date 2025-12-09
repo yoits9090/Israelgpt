@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 env:
-  DEPLOY_PATH: /home/ubuntu/israelgpt
+  DEPLOY_PATH: /home/ubuntu/guildest
   STATUS_WEBHOOK: ${{ secrets.status }}
 
 jobs:
@@ -75,7 +75,7 @@ jobs:
           echo "Building Docker image..."
           sudo DOCKER_BUILDKIT=1 docker build \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
-            -t israelgpt-bot:${{ github.sha }} \
+            -t guildest-bot:${{ github.sha }} \
             .
           
           # ============================================
@@ -99,7 +99,7 @@ jobs:
           # Run import check (catches import errors like missing modules)
           echo "Testing imports..."
           if ! sudo docker run --rm -w /app/src \
-            israelgpt-bot:${{ github.sha }} \
+            guildest-bot:${{ github.sha }} \
             python -c "from cogs import setup_all_cogs; from core.bot import bot; print('✅ Imports OK')"; then
             echo "❌ SMOKE TEST FAILED: Import errors detected"
             # Notify smoke test failed
@@ -135,40 +135,40 @@ jobs:
           echo "✅ Smoke test passed - proceeding with deploy..."
           
           # Tag as latest now that we know it works
-          sudo docker tag israelgpt-bot:${{ github.sha }} israelgpt-bot:latest
+          sudo docker tag guildest-bot:${{ github.sha }} guildest-bot:latest
           
           # Stop old containers gracefully
           echo "Stopping old containers..."
-          sudo docker stop israelgpt-bot israelgpt-autobumper grafana-agent 2>/dev/null || true
-          sudo docker rm israelgpt-bot israelgpt-autobumper grafana-agent 2>/dev/null || true
+          sudo docker stop guildest-bot guildest-autobumper grafana-agent 2>/dev/null || true
+          sudo docker rm guildest-bot guildest-autobumper grafana-agent 2>/dev/null || true
           
           # Create Docker network for internal communication
-          sudo docker network create israelgpt-net 2>/dev/null || true
+          sudo docker network create guildest-net 2>/dev/null || true
           
           # Start bot container with resource limits
           echo "Starting bot container..."
           sudo docker run -d \
-            --name israelgpt-bot \
-            --network israelgpt-net \
+            --name guildest-bot \
+            --network guildest-net \
             --restart unless-stopped \
             --env-file .env \
             --memory=512m \
             --log-opt max-size=10m \
             --log-opt max-file=3 \
             -v ${{ env.DEPLOY_PATH }}/data:/app/data \
-            israelgpt-bot:latest
+            guildest-bot:latest
 
           # Start autobumper container
           echo "Starting autobumper container..."
           sudo docker run -d \
-            --name israelgpt-autobumper \
-            --network israelgpt-net \
+            --name guildest-autobumper \
+            --network guildest-net \
             --restart unless-stopped \
             --env-file .env \
             --memory=128m \
             --log-opt max-size=5m \
             --log-opt max-file=2 \
-            israelgpt-bot:latest \
+            guildest-bot:latest \
             bash -c 'cd autobumper && node index.js'
           
           # Start Grafana Agent for metrics (if configured)
@@ -176,7 +176,7 @@ jobs:
             echo "Starting Grafana Agent for metrics..."
             sudo docker run -d \
               --name grafana-agent \
-              --network israelgpt-net \
+              --network guildest-net \
               --restart unless-stopped \
               -e "GRAFANA_REMOTE_WRITE_URL=${{ secrets.GRAFANA_REMOTE_WRITE_URL }}" \
               -e "GRAFANA_METRICS_USER=${{ secrets.GRAFANA_METRICS_USER }}" \
@@ -195,11 +195,11 @@ jobs:
           # Final health check
           echo "Checking container health..."
           sleep 5
-          if sudo docker ps | grep -q israelgpt-bot; then
+          if sudo docker ps | grep -q guildest-bot; then
             echo "✅ Bot is running"
           else
             echo "❌ Bot failed to start"
-            sudo docker logs israelgpt-bot --tail 50
+            sudo docker logs guildest-bot --tail 50
             exit 1
           fi
 

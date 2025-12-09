@@ -8,18 +8,20 @@ metrics:
   global:
     scrape_interval: 15s
     external_labels:
-      app: israelgpt
+      app: guildest
       env: production
   configs:
-    - name: israelgpt
+    - name: guildest
       scrape_configs:
-        - job_name: israelgpt_bot
+        - job_name: guildest_bot
           static_configs:
-            - targets: ['israelgpt-bot:8000']
+            - targets: ['guildest-bot:8000']
               labels:
                 instance: ec2
       remote_write:
         - url: "${GRAFANA_REMOTE_WRITE_URL}"
           basic_auth:
             username: "${GRAFANA_METRICS_USER}"
-            password: "${GRAFANA_API_KEY}"
+            # Combine split API key chunks to avoid storing the full secret in a single env var.
+            # Leave GRAFANA_API_KEY unset when using the split form to prevent duplication.
+            password: "${GRAFANA_API_KEY_PREFIX}${GRAFANA_API_KEY_SUFFIX}${GRAFANA_API_KEY}"
