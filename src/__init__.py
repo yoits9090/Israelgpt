@@ -1,6 +1,6 @@
-"""IsraelGPT Discord Bot.
+"""Guildest Discord Bot.
 
-A feature-rich Discord bot with Israeli personality, including:
+A feature-rich Discord bot with a professional, neutral tone, including:
 - Moderation commands (ban, kick, mute, etc.)
 - Leveling and XP system
 - Music playback

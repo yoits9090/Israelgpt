@@ -1,4 +1,4 @@
-"""Environment variables and constants for IsraelGPT."""
+"""Environment variables and constants for Guildest."""
 
 import os
 from pathlib import Path
@@ -38,3 +38,8 @@ GROQ_API_KEY = os.getenv("GROQ_API")
 
 # Observability
 METRICS_PORT = int(os.getenv("METRICS_PORT", "8000"))
+
+# Queue/DB backends
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+TASK_NAMESPACE = os.getenv("TASK_NAMESPACE", "guildest")
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{Path('data') / 'guildest.db'}")

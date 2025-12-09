@@ -67,7 +67,7 @@ def send_webhook(webhook: str, payload: Dict) -> None:
         data=data,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "IsraelGPT-StatusNotifier/1.0",
+            "User-Agent": "Guildest-StatusNotifier/1.0",
         },
         method="POST",
     )

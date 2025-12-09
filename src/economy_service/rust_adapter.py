@@ -7,7 +7,7 @@ import time
 from typing import Dict, Optional
 
 try:
-    from israelgpt_core import EconomyEngine
+    from guildest_core import EconomyEngine
 except Exception:
     EconomyEngine = None
 

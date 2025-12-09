@@ -1,5 +1,5 @@
 """
-Prometheus metrics helpers for IsraelGPT.
+Prometheus metrics helpers for Guildest.
 
 Exports a small HTTP server on METRICS_PORT to be scraped by Prometheus.
 """
@@ -13,44 +13,44 @@ from prometheus_client import Counter, Histogram, start_http_server
 
 # Counters
 MESSAGE_COUNTER = Counter(
-    "israelgpt_messages_total",
+    "guildest_messages_total",
     "Total number of messages seen by the bot",
     ["guild_id"],
 )
 
 COMMAND_COUNTER = Counter(
-    "israelgpt_commands_total",
+    "guildest_commands_total",
     "Total number of commands executed",
     ["guild_id", "command"],
 )
 
 ERROR_COUNTER = Counter(
-    "israelgpt_errors_total",
+    "guildest_errors_total",
     "Total number of errors encountered",
     ["source"],
 )
 
 SPAM_COUNTER = Counter(
-    "israelgpt_spam_events_total",
+    "guildest_spam_events_total",
     "Total number of spam detections",
     ["guild_id"],
 )
 
 LLM_REQUEST_COUNTER = Counter(
-    "israelgpt_llm_requests_total",
+    "guildest_llm_requests_total",
     "Total number of LLM requests",
     ["model", "status"],
 )
 
 COMMAND_DURATION_HISTOGRAM = Histogram(
-    "israelgpt_command_duration_seconds",
+    "guildest_command_duration_seconds",
     "Command execution duration in seconds",
     ["guild_id", "command"],
     buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
 
 LLM_DURATION_HISTOGRAM = Histogram(
-    "israelgpt_llm_duration_seconds",
+    "guildest_llm_duration_seconds",
     "LLM request duration in seconds",
     ["model"],
     buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 30.0),

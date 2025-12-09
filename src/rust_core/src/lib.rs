@@ -1,4 +1,4 @@
-//! High-performance Rust functions for IsraelGPT Discord bot.
+//! High-performance Rust functions for the Guildest Discord bot.
 //!
 //! This module provides Rust implementations of frequently-called functions
 //! that benefit from native performance, particularly for:
@@ -466,7 +466,7 @@ fn repr_string(s: &str) -> String {
 
 /// Python module definition
 #[pymodule]
-fn israelgpt_core(_py: Python, m: &PyModule) -> PyResult<()> {
+fn guildest_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(truncate, m)?)?;
     m.add_function(wrap_pyfunction!(parse_duration_secs, m)?)?;
     m.add_function(wrap_pyfunction!(text_contains_phrase, m)?)?;

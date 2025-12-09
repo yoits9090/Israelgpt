@@ -10,7 +10,7 @@ from db.transcriptions import save_transcription, start_voice_session, end_voice
 
 # Try to use Rust database writer if available
 try:
-    from israelgpt_core import DatabaseWriter
+    from guildest_core import DatabaseWriter
     _db_writer: Optional["DatabaseWriter"] = DatabaseWriter()
     _USE_RUST_DB = True
 except ImportError:

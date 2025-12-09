@@ -28,7 +28,7 @@ class HelpPaginator(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user != self.ctx.author:
             await interaction.response.send_message(
-                "Only the person who asked for help can use these buttons, chaver!",
+                "Only the person who requested help can use these buttons.",
                 ephemeral=True,
             )
             return False
@@ -63,7 +63,7 @@ class HelpPaginator(discord.ui.View):
 def build_help_pages(prefix: str) -> list[discord.Embed]:
     """Build the help menu embeds."""
     overview = discord.Embed(
-        title="IsraelGPT Command Guide",
+        title="Guildest Command Guide",
         description=(
             "Interactive guide for every command. Navigate with the buttons to see detailed "
             "usage, permissions, and examples."
@@ -187,8 +187,8 @@ def build_help_pages(prefix: str) -> list[discord.Embed]:
 
     ai = discord.Embed(title="AI & Tickets", color=0xF1C40F)
     ai.add_field(
-        name="Mentioning IsraelGPT",
-        value="Mention the bot to get a friendly AI reply.",
+        name="Mentioning Guildest",
+        value="Mention the bot to get a concise, helpful AI reply.",
         inline=False,
     )
     ai.add_field(
@@ -273,7 +273,7 @@ class AdminCog(commands.Cog, name="Admin"):
             ctx.author.guild_permissions.manage_guild
             or ctx.author.guild_permissions.administrator
         ):
-            await ctx.send("You need Manage Server permissions to change this, chaver.")
+            await ctx.send("You need Manage Server permissions to change this.")
             return
 
         if key is None or value is None:
@@ -339,7 +339,7 @@ class AdminCog(commands.Cog, name="Admin"):
             ctx.author.guild_permissions.manage_guild
             or ctx.author.guild_permissions.administrator
         ):
-            await ctx.send("You need Manage Server permissions to change this, chaver.")
+            await ctx.send("You need Manage Server permissions to change this.")
             return
 
         if key is None:

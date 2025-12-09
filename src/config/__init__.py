@@ -1,4 +1,4 @@
-"""Configuration module for IsraelGPT."""
+"""Configuration module for Guildest."""
 
 from .settings import (
     TOKEN,
@@ -15,6 +15,9 @@ from .settings import (
     MARKETPLACE_STAFF_ROLE_IDS,
     GROQ_API_KEY,
     METRICS_PORT,
+    REDIS_URL,
+    TASK_NAMESPACE,
+    DATABASE_URL,
 )
 
 from .guild_config import (
@@ -46,6 +49,9 @@ __all__ = [
     "MARKETPLACE_STAFF_ROLE_IDS",
     "GROQ_API_KEY",
     "METRICS_PORT",
+    "REDIS_URL",
+    "TASK_NAMESPACE",
+    "DATABASE_URL",
     "GuildSettings",
     "guild_settings",
     "load_guild_configs",

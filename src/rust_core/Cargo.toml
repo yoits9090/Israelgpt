@@ -1,11 +1,11 @@
 [package]
-name = "israelgpt_core"
+name = "guildest_core"
 version = "0.1.0"
 edition = "2021"
-description = "High-performance Rust functions for IsraelGPT Discord bot"
+description = "High-performance Rust functions for Guildest Discord bot"
 
 [lib]
-name = "israelgpt_core"
+name = "guildest_core"
 crate-type = ["cdylib"]
 
 [dependencies]

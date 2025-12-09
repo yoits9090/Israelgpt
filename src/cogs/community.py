@@ -73,7 +73,7 @@ class CommunityCog(commands.Cog, name="Community"):
         member = member or ctx.author
         embed = discord.Embed(title=f"{member.display_name}'s Avatar", color=0x0000FF)
         embed.set_image(url=member.display_avatar.url)
-        embed.set_footer(text="Sababa!")
+        embed.set_footer(text="Have fun!")
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="banner")
@@ -106,7 +106,7 @@ class CommunityCog(commands.Cog, name="Community"):
             embed.set_image(url=ctx.guild.banner.url)
             await ctx.send(embed=embed)
         else:
-            await ctx.send("This server has no banner, chaver!")
+            await ctx.send("This server has no banner configured.")
 
     @commands.hybrid_command(name="poll")
     async def poll(self, ctx: commands.Context, *, question_and_options: str | None = None):

@@ -3,9 +3,9 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "israelgpt_core"
+name = "guildest_core"
 version = "0.1.0"
-description = "High-performance Rust functions for IsraelGPT Discord bot"
+description = "High-performance Rust functions for Guildest Discord bot"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Rust",
