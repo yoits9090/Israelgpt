@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from datetime import datetime
 
@@ -86,6 +87,55 @@ async def _queue_message_safety(message: discord.Message) -> None:
         print(f"Safety scan failed: {exc}")
 
 
+async def _maybe_send_self_followup(
+    message: discord.Message,
+    previous_reply: str,
+    channel_context,
+) -> None:
+    """Occasionally add one short follow-up so the bot feels more present."""
+    if random.random() >= 0.45:
+        return
+
+    await asyncio.sleep(random.uniform(1.5, 4.0))
+
+    prompt = (
+        "You just sent this Discord message:\n"
+        f"{previous_reply}\n\n"
+        "Send one more very short playful follow-up to your own message. "
+        "Do not ask a question unless it clearly fits the chat. "
+        "Do not mention that you are talking to yourself."
+    )
+    job = None
+    try:
+        job = await task_queue.enqueue(
+            "llm_reply",
+            {
+                "prompt": prompt,
+                "username": (
+                    message.guild.me.display_name
+                    if message.guild and message.guild.me
+                    else "Guildest"
+                ),
+                "guild_name": message.guild.name if message.guild else None,
+                "guild_id": message.guild.id if message.guild else None,
+                "user_id": message.author.id,
+                "channel_id": message.channel.id,
+                "channel_context": channel_context,
+            },
+            requested_by=getattr(message.author, "id", None),
+            result_ttl=180,
+        )
+        result = await task_queue.wait_for_result(job.job_id, timeout=75)
+        followup_text = (result or {}).get("reply")
+        if followup_text:
+            await message.channel.send(followup_text)
+    except asyncio.TimeoutError:
+        job_id = job.job_id if job else "unknown"
+        print(f"LLM self-followup timed out for job {job_id}")
+    except Exception as exc:
+        print(f"LLM self-followup failed: {exc}")
+
+
 async def _queue_llm_reply(
     message: discord.Message,
     prompt: str,
@@ -121,6 +171,9 @@ async def _queue_llm_reply(
             await message.reply(reply_text)
         else:
             await message.channel.send(reply_text)
+            asyncio.create_task(
+                _maybe_send_self_followup(message, reply_text, channel_context)
+            )
     except asyncio.TimeoutError:
         job_id = job.job_id if job else "unknown"
         print(f"LLM reply timed out for job {job_id}")

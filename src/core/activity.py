@@ -28,7 +28,7 @@ class ActivityTracker:
     The Rust implementation provides ~10x speedup for these operations.
     """
 
-    def __init__(self, bot_prefix: str = ","):
+    def __init__(self, bot_prefix: str = "?"):
         self.bot_prefix = bot_prefix
         
         if _USE_RUST:
@@ -79,10 +79,10 @@ class ActivityTracker:
         Returns True if the bot should send a reply (active conversation detected).
         
         Criteria:
-        - At least 6 messages in 20 seconds
-        - At least 3 unique users
-        - 45 second cooldown between triggers
-        - 35% random chance when criteria met
+        - At least 3 messages in 30 seconds
+        - At least 2 unique users
+        - 15 second cooldown between triggers
+        - 85% random chance when criteria met
         """
         if now is None:
             now = datetime.utcnow()
@@ -106,20 +106,20 @@ class ActivityTracker:
         while window and (now - window[0][0]) > timedelta(seconds=30):
             window.popleft()
 
-        # Check activity in last 20 seconds
-        active_window = [(ts, uid) for ts, uid in window if (now - ts) <= timedelta(seconds=20)]
+        # Check activity in last 30 seconds
+        active_window = [(ts, uid) for ts, uid in window if (now - ts) <= timedelta(seconds=30)]
         unique_users = {uid for _, uid in active_window}
 
-        if len(active_window) < 6 or len(unique_users) < 3:
+        if len(active_window) < 3 or len(unique_users) < 2:
             return False
 
         # Check cooldown
         last_trigger = self._chat_cooldowns.get(guild_id)
-        if last_trigger and (now - last_trigger) < timedelta(seconds=45):
+        if last_trigger and (now - last_trigger) < timedelta(seconds=15):
             return False
 
         # Random chance to trigger
-        if random.random() < 0.35:
+        if random.random() < 0.85:
             self._chat_cooldowns[guild_id] = now
             return True
 
