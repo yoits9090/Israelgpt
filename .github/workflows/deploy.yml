@@ -10,18 +10,36 @@ on:
 
   # Allow manual deploys from GitHub UI
   workflow_dispatch:
+    inputs:
+      deploy_host:
+        description: "Override EC2 host/IP for this deploy"
+        required: false
+        type: string
 
 env:
-  DEPLOY_PATH: /home/ubuntu/guildest
+  APP_NAME: israelgpt
+  DEPLOY_HOST: ${{ inputs.deploy_host || vars.EC2_HOST || secrets.EC2_HOST }}
+  DEPLOY_PATH: /home/ec2-user/israelgpt
   STATUS_WEBHOOK: ${{ secrets.status }}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Validate deploy host
+      run: |
+        if [ -z "${{ env.DEPLOY_HOST }}" ]; then
+          echo "Set the EC2_HOST repository variable/secret, or pass deploy_host when manually running this workflow."
+          exit 1
+        fi
 
     - name: Notify Deploy Started
       if: always() && env.STATUS_WEBHOOK != ''
@@ -29,7 +47,7 @@ jobs:
         python microservices/status_notifier/main.py \
           --event deploy \
           --status started \
-          --summary "Deploy to EC2 started" \
+          --summary "Deploy to single t2.micro EC2 started" \
           --ref "${{ github.ref }}" \
           --commit "${{ github.sha }}" \
           --actor "${{ github.actor }}" \
@@ -38,7 +56,7 @@ jobs:
     - name: Copy files to EC2
       uses: appleboy/scp-action@v0.1.7
       with:
-        host: ${{ secrets.EC2_HOST }}
+        host: ${{ env.DEPLOY_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
         source: "."
@@ -49,10 +67,10 @@ jobs:
       id: deploy_step
       uses: appleboy/ssh-action@v1.0.3
       with:
-        host: ${{ secrets.EC2_HOST }}
+        host: ${{ env.DEPLOY_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
-        command_timeout: 10m
+        command_timeout: 20m
         script: |
           set -e
           cd ${{ env.DEPLOY_PATH }}
@@ -63,6 +81,7 @@ jobs:
           echo "AUTO_ROLE_ID=${{ secrets.AUTO_ROLE_ID }}" >> .env
           echo "GROQ_API=${{ secrets.GROQ_API }}" >> .env
           echo "PRIMARY_GUILD_ID=${{ secrets.PRIMARY_GUILD_ID }}" >> .env
+          echo "REDIS_URL=redis://${{ env.APP_NAME }}-redis:6379/0" >> .env
           echo "DISCORDBUMP_TOKEN=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
           echo "token=${{ secrets.DISCORDBUMP_TOKEN }}" >> .env
           
@@ -70,12 +89,21 @@ jobs:
 
           # Ensure data directory exists
           mkdir -p ${{ env.DEPLOY_PATH }}/data
+
+          # t2.micro has tight RAM; keep a small swap file so Docker builds do not OOM.
+          if ! sudo swapon --show | grep -q .; then
+            echo "Creating 1G swap file for small EC2 deploy host..."
+            sudo fallocate -l 1G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=1024
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
           
           # Build with BuildKit for faster cached builds
           echo "Building Docker image..."
           sudo DOCKER_BUILDKIT=1 docker build \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
-            -t guildest-bot:${{ github.sha }} \
+            -t ${{ env.APP_NAME }}:${{ github.sha }} \
             .
           
           # ============================================
@@ -99,7 +127,7 @@ jobs:
           # Run import check (catches import errors like missing modules)
           echo "Testing imports..."
           if ! sudo docker run --rm -w /app/src \
-            guildest-bot:${{ github.sha }} \
+            ${{ env.APP_NAME }}:${{ github.sha }} \
             python -c "from cogs import setup_all_cogs; from core.bot import bot; print('✅ Imports OK')"; then
             echo "❌ SMOKE TEST FAILED: Import errors detected"
             # Notify smoke test failed
@@ -135,40 +163,68 @@ jobs:
           echo "✅ Smoke test passed - proceeding with deploy..."
           
           # Tag as latest now that we know it works
-          sudo docker tag guildest-bot:${{ github.sha }} guildest-bot:latest
+          sudo docker tag ${{ env.APP_NAME }}:${{ github.sha }} ${{ env.APP_NAME }}:latest
           
           # Stop old containers gracefully
           echo "Stopping old containers..."
-          sudo docker stop guildest-bot guildest-autobumper grafana-agent 2>/dev/null || true
-          sudo docker rm guildest-bot guildest-autobumper grafana-agent 2>/dev/null || true
+          sudo docker stop ${{ env.APP_NAME }}-bot ${{ env.APP_NAME }}-worker ${{ env.APP_NAME }}-autobumper ${{ env.APP_NAME }}-redis grafana-agent guildest-bot guildest-autobumper 2>/dev/null || true
+          sudo docker rm ${{ env.APP_NAME }}-bot ${{ env.APP_NAME }}-worker ${{ env.APP_NAME }}-autobumper ${{ env.APP_NAME }}-redis grafana-agent guildest-bot guildest-autobumper 2>/dev/null || true
           
           # Create Docker network for internal communication
-          sudo docker network create guildest-net 2>/dev/null || true
+          sudo docker network create ${{ env.APP_NAME }}-net 2>/dev/null || true
+
+          # Start Redis on the same EC2 instance for the gateway/worker queue.
+          echo "Starting Redis container..."
+          sudo docker run -d \
+            --name ${{ env.APP_NAME }}-redis \
+            --network ${{ env.APP_NAME }}-net \
+            --restart unless-stopped \
+            --memory=96m \
+            --log-opt max-size=5m \
+            --log-opt max-file=2 \
+            -v ${{ env.DEPLOY_PATH }}/data/redis:/data \
+            redis:7-alpine \
+            redis-server --appendonly yes --maxmemory 64mb --maxmemory-policy allkeys-lru
           
           # Start bot container with resource limits
           echo "Starting bot container..."
           sudo docker run -d \
-            --name guildest-bot \
-            --network guildest-net \
+            --name ${{ env.APP_NAME }}-bot \
+            --network ${{ env.APP_NAME }}-net \
             --restart unless-stopped \
             --env-file .env \
-            --memory=512m \
+            -e SERVICE=gateway \
+            --memory=384m \
             --log-opt max-size=10m \
             --log-opt max-file=3 \
             -v ${{ env.DEPLOY_PATH }}/data:/app/data \
-            guildest-bot:latest
+            ${{ env.APP_NAME }}:latest
+
+          # Start worker container on the same host/network.
+          echo "Starting worker container..."
+          sudo docker run -d \
+            --name ${{ env.APP_NAME }}-worker \
+            --network ${{ env.APP_NAME }}-net \
+            --restart unless-stopped \
+            --env-file .env \
+            -e SERVICE=worker \
+            --memory=256m \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            -v ${{ env.DEPLOY_PATH }}/data:/app/data \
+            ${{ env.APP_NAME }}:latest
 
           # Start autobumper container
           echo "Starting autobumper container..."
           sudo docker run -d \
-            --name guildest-autobumper \
-            --network guildest-net \
+            --name ${{ env.APP_NAME }}-autobumper \
+            --network ${{ env.APP_NAME }}-net \
             --restart unless-stopped \
             --env-file .env \
-            --memory=128m \
+            --memory=96m \
             --log-opt max-size=5m \
             --log-opt max-file=2 \
-            guildest-bot:latest \
+            ${{ env.APP_NAME }}:latest \
             bash -c 'cd autobumper && node index.js'
           
           # Start Grafana Agent for metrics (if configured)
@@ -176,7 +232,7 @@ jobs:
             echo "Starting Grafana Agent for metrics..."
             sudo docker run -d \
               --name grafana-agent \
-              --network guildest-net \
+              --network ${{ env.APP_NAME }}-net \
               --restart unless-stopped \
               -e "GRAFANA_REMOTE_WRITE_URL=${{ secrets.GRAFANA_REMOTE_WRITE_URL }}" \
               -e "GRAFANA_METRICS_USER=${{ secrets.GRAFANA_METRICS_USER }}" \
@@ -195,11 +251,16 @@ jobs:
           # Final health check
           echo "Checking container health..."
           sleep 5
-          if sudo docker ps | grep -q guildest-bot; then
-            echo "✅ Bot is running"
+          if sudo docker ps --format '{{.Names}}' | grep -qx '${{ env.APP_NAME }}-bot' && \
+             sudo docker ps --format '{{.Names}}' | grep -qx '${{ env.APP_NAME }}-worker' && \
+             sudo docker ps --format '{{.Names}}' | grep -qx '${{ env.APP_NAME }}-redis'; then
+            echo "✅ Required containers are running"
           else
-            echo "❌ Bot failed to start"
-            sudo docker logs guildest-bot --tail 50
+            echo "❌ One or more required containers failed to start"
+            sudo docker ps -a --filter "name=${{ env.APP_NAME }}"
+            sudo docker logs ${{ env.APP_NAME }}-bot --tail 50 || true
+            sudo docker logs ${{ env.APP_NAME }}-worker --tail 50 || true
+            sudo docker logs ${{ env.APP_NAME }}-redis --tail 50 || true
             exit 1
           fi
 
@@ -215,11 +276,11 @@ jobs:
         python microservices/status_notifier/main.py \
           --event deploy \
           --status "${{ steps.deploy_step.outcome }}" \
-          --summary "Docker build and EC2 container restart" \
+          --summary "Docker build and single EC2 container restart" \
           --ref "${{ github.ref }}" \
           --commit "${{ github.sha }}" \
           --actor "${{ github.actor }}" \
-          --notes "Includes docker build, container restart, and health check on EC2."
+          --notes "Includes Docker build plus Redis, gateway, worker, and autobumper restart on one EC2 host."
 
     - name: Notify Discord
       if: always()
