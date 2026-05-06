@@ -90,7 +90,6 @@ async def _queue_llm_reply(
     message: discord.Message,
     prompt: str,
     channel_context,
-    active_user_ids,
     *,
     reply_to_message: bool = False,
 ) -> None:
@@ -110,7 +109,6 @@ async def _queue_llm_reply(
                 "user_id": message.author.id,
                 "channel_id": message.channel.id,
                 "channel_context": channel_context,
-                "active_user_ids": active_user_ids,
             },
             requested_by=getattr(message.author, "id", None),
             result_ttl=180,
@@ -258,16 +256,12 @@ def setup_events(bot: commands.Bot) -> None:
                     try:
                         # Fetch channel context (last 30 messages, truncate links)
                         channel_context = await fetch_channel_context(message.channel, limit=30)
-                        active_user_ids = list(
-                            set(int(uid) for _, uid, _ in channel_context)
-                        )[:10]
 
                         bot.loop.create_task(
                             _queue_llm_reply(
                                 message,
                                 prompt,
                                 channel_context,
-                                active_user_ids,
                             )
                         )
                     except Exception as e:
@@ -295,7 +289,6 @@ def setup_events(bot: commands.Bot) -> None:
                             message,
                             content,
                             channel_context,
-                            [message.author.id],
                             reply_to_message=True,
                         )
                     )

@@ -137,7 +137,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         log_history(ctx.guild.id, 1, "nation_founded", 
                    f"The nation of {name} was founded!")
         
-        await ctx.send(f"🎉 **{name}** has been founded! Use `,nation` to view details.")
+        await ctx.send(f"🎉 **{name}** has been founded! Use `?nation` to view details.")
 
     @commands.hybrid_command(name="nation-config")
     @commands.has_permissions(administrator=True)
@@ -147,7 +147,7 @@ class GovernmentCog(commands.Cog, name="Government"):
             # Show configurable keys
             embed = discord.Embed(
                 title="⚙️ Nation Configuration",
-                description="Use `,nation-config <key> <value>` to change settings.",
+                description="Use `?nation-config <key> <value>` to change settings.",
                 color=discord.Color.blue(),
             )
             embed.add_field(
@@ -236,7 +236,7 @@ class GovernmentCog(commands.Cog, name="Government"):
             bills = get_pending_bills(ctx.guild.id)
             
             if not bills:
-                await ctx.send("📭 No pending bills. Use `,law propose <policy> <value>` to propose one.")
+                await ctx.send("📭 No pending bills. Use `?law propose <policy> <value>` to propose one.")
                 return
             
             embed = discord.Embed(
@@ -276,8 +276,8 @@ class GovernmentCog(commands.Cog, name="Government"):
             # Parse args: <policy_key> <new_value> [description]
             parts = args.split(maxsplit=2)
             if len(parts) < 2:
-                await ctx.send("❌ Usage: `,law propose <policy_key> <new_value> [description]`\n"
-                              "Example: `,law propose income_tax_rate 0.25 Increase income tax to 25%`")
+                await ctx.send("❌ Usage: `?law propose <policy_key> <new_value> [description]`\n"
+                              "Example: `?law propose income_tax_rate 0.25 Increase income tax to 25%`")
                 return
             
             policy_key = parts[0]
@@ -286,7 +286,7 @@ class GovernmentCog(commands.Cog, name="Government"):
             
             # Validate policy key
             if policy_key not in DEFAULT_POLICIES:
-                await ctx.send(f"❌ Unknown policy key. Use `,policies` to see available policies.")
+                await ctx.send(f"❌ Unknown policy key. Use `?policies` to see available policies.")
                 return
             
             bill_id = create_bill(
@@ -299,12 +299,12 @@ class GovernmentCog(commands.Cog, name="Government"):
             
             await ctx.send(f"📜 **Bill #{bill_id}** proposed!\n"
                           f"Policy: `{policy_key}` → `{new_value}`\n"
-                          f"Voting open for 24 hours. Use `,law vote {bill_id} yes/no`")
+                          f"Voting open for 24 hours. Use `?law vote {bill_id} yes/no`")
         
         elif action.lower() == "vote":
             parts = args.split()
             if len(parts) < 2:
-                await ctx.send("❌ Usage: `,law vote <bill_id> yes/no`")
+                await ctx.send("❌ Usage: `?law vote <bill_id> yes/no`")
                 return
             
             try:
@@ -337,7 +337,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         
         elif action.lower() == "info":
             if not args:
-                await ctx.send("❌ Specify a policy key: `,law info income_tax_rate`")
+                await ctx.send("❌ Specify a policy key: `?law info income_tax_rate`")
                 return
             
             policy_key = args.strip()
@@ -360,7 +360,7 @@ class GovernmentCog(commands.Cog, name="Government"):
     async def set_policy_direct(self, ctx: commands.Context, key: str, *, value: str):
         """Directly set a policy (Admin only, bypasses voting)."""
         if key not in DEFAULT_POLICIES:
-            await ctx.send(f"❌ Unknown policy key. Use `,policies` to see valid keys.")
+            await ctx.send(f"❌ Unknown policy key. Use `?policies` to see valid keys.")
             return
         
         # Parse value type
@@ -439,7 +439,7 @@ class GovernmentCog(commands.Cog, name="Government"):
         office = next((o for o in offices if o["name"].lower() == office_name.lower()), None)
         
         if not office:
-            await ctx.send(f"❌ Office '{office_name}' not found. Use `,offices` to see offices.")
+            await ctx.send(f"❌ Office '{office_name}' not found. Use `?offices` to see offices.")
             return
         
         nation = get_or_create_nation(ctx.guild.id)

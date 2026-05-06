@@ -87,6 +87,7 @@ async def fetch_channel_context(
 async def get_active_users_context(
     guild_id: int,
     user_ids: List[int],
+    channel_id: int | None = None,
     max_per_user: int = 5,
 ) -> Dict[int, List[Tuple[str, str]]]:
     """
@@ -98,6 +99,7 @@ async def get_active_users_context(
         history = get_recent_conversation(
             guild_id=guild_id,
             user_id=uid,
+            channel_id=channel_id,
             max_messages=max_per_user,
             max_chars=1000,
         )
@@ -114,14 +116,16 @@ async def generate_professional_reply(
     user_id: Optional[int] = None,
     channel_id: Optional[int] = None,
     channel_context: Optional[List[Tuple[str, str, str]]] = None,
-    active_users_history: Optional[Dict[int, List[Tuple[str, str]]]] = None,
 ) -> Optional[str]:
     """Generate a concise, professional Discord reply using Groq's llama-3.1-8b-instant."""
     system_prompt = (
         "You are Guildest, a professional, concise, and helpful Discord assistant. "
         "Speak with clarity and respect, keep replies short and actionable, and focus on being useful. "
         "Avoid slang and bias; respond with balanced guidance, safety, and civility. "
-        "Decline unsafe or harmful requests politely and offer safer alternatives when appropriate."
+        "Decline unsafe or harmful requests politely and offer safer alternatives when appropriate. "
+        "Only address what is visible in the current channel context and the latest user message. "
+        "Do not mention, infer, or summarize private history, past disputes, or conversations that are not "
+        "explicitly present in the current channel context."
     )
 
     # Build limited-length conversational context from history
@@ -130,6 +134,7 @@ async def generate_professional_reply(
         history = get_recent_conversation(
             guild_id=guild_id,
             user_id=user_id,
+            channel_id=channel_id,
             max_messages=40,
             max_chars=6000,
         )
@@ -150,29 +155,14 @@ async def generate_professional_reply(
                 + "\n--- End of recent chat ---\n"
             )
 
-    # Build active users' previous conversations with the bot
-    users_history_str = ""
-    if active_users_history:
-        user_sections = []
-        for uid, convos in active_users_history.items():
-            if convos:
-                convo_lines = [f"  {role}: {content[:150]}" for role, content in convos[-3:]]
-                user_sections.append(f"User {uid}'s recent exchanges:\n" + "\n".join(convo_lines))
-        if user_sections:
-            users_history_str = (
-                "\n--- Previous conversations with active chatters ---\n"
-                + "\n\n".join(user_sections[:5])  # Limit to 5 users
-                + "\n--- End of previous conversations ---\n"
-            )
-
     # For the current turn, keep content compact but informative
     current_content = (
         f"Server: {guild_name or 'unknown'}\n"
         f"{channel_context_str}"
-        f"{users_history_str}\n"
         f"Now {username} said: {user_message}\n\n"
         "Join the conversation naturally. Be relevant, concise, and professional. "
-        "Keep it short, friendly, and helpful for Discord."
+        "Keep it short, friendly, and helpful for Discord. "
+        "If the recent channel context does not support a claim, do not make that claim."
     )
 
     # Log the user prompt

@@ -117,7 +117,7 @@ class CommunityCog(commands.Cog, name="Community"):
 
         segments = [s.strip() for s in question_and_options.split("|") if s.strip()]
         if len(segments) < 3:
-            await ctx.send("Format: `,poll What do we eat? | Pizza | Falafel | Sushi`")
+            await ctx.send("Format: `?poll What do we eat? | Pizza | Falafel | Sushi`")
             return
 
         question, options = segments[0], segments[1:]
@@ -141,7 +141,7 @@ class CommunityCog(commands.Cog, name="Community"):
     ):
         """Set a reminder."""
         if duration is None or reminder is None:
-            await ctx.send("Usage: `,remind <duration> <message>` e.g. `,remind 15m Drink water`")
+            await ctx.send("Usage: `?remind <duration> <message>` e.g. `?remind 15m Drink water`")
             return
 
         parsed = parse_duration(duration.lower())

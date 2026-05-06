@@ -18,7 +18,7 @@ if str(SRC_PATH) not in sys.path:
 
 load_dotenv()
 
-from services.llm import classify_message_safety, generate_professional_reply, get_active_users_context  # noqa: E402
+from services.llm import classify_message_safety, generate_professional_reply  # noqa: E402
 from taskqueue import QueueTask, get_task_queue  # noqa: E402
 
 
@@ -29,15 +29,6 @@ async def handle_llm_reply(task: QueueTask) -> Dict:
     payload = task.payload
     prompt = payload.get("prompt") or payload.get("message") or ""
     guild_id = payload.get("guild_id")
-    active_user_ids = [int(uid) for uid in payload.get("active_user_ids", []) if uid is not None]
-
-    active_users_history = {}
-    if guild_id is not None and active_user_ids:
-        active_users_history = await get_active_users_context(
-            guild_id=guild_id,
-            user_ids=active_user_ids,
-            max_per_user=5,
-        )
 
     reply = await generate_professional_reply(
         user_message=prompt,
@@ -47,7 +38,6 @@ async def handle_llm_reply(task: QueueTask) -> Dict:
         user_id=payload.get("user_id"),
         channel_id=payload.get("channel_id"),
         channel_context=payload.get("channel_context"),
-        active_users_history=active_users_history or None,
     )
     return {"reply": reply}
 

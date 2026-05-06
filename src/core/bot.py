@@ -11,5 +11,5 @@ intents.members = True
 intents.presences = True
 
 # Bot instance
-bot = commands.Bot(command_prefix=",", intents=intents)
+bot = commands.Bot(command_prefix="?", intents=intents)
 bot.remove_command("help")  # We provide our own help command

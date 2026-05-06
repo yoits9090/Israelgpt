@@ -32,7 +32,7 @@ class CommandGateway(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
-        super().__init__(command_prefix=",", intents=intents)
+        super().__init__(command_prefix="?", intents=intents)
         self._synced = False
 
     async def setup_hook(self) -> None:
