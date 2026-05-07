@@ -1,28 +1,21 @@
-# Gateway → Queue → Worker
+# Israel GPT Architecture
 
-Repository layout now follows a small pipeline to keep Discord-facing code lean and push heavy work to background workers.
+Israel GPT is intentionally small: the Discord gateway is the chatbot, and there are no background workers, queues, command suites, or server automation features in the runtime path.
 
-## Components
-- **Gateway** (`src/main.py`, `core/events.py`): handles Discord events, spam/leveling, and enqueues heavy work (LLM replies, safety checks) to Redis.
-- **Queue** (`taskqueue/`): Redis-backed list at `<namespace>:tasks` plus per-job result lists at `<namespace>:results:<job_id>`. Defaults are driven by `REDIS_URL` and `TASK_NAMESPACE`.
-- **Worker** (`microservices/worker/main.py`): pulls from the task list and runs handlers (`llm_reply`, `safety_scan`) using existing services, then publishes results back for the gateway to respond in Discord.
-- **Other microservices**: command sync and status notifier remain separate. High-volume services can be split further (consider Rust for CPU-bound/high-QPS pieces per repo guidelines).
+## Runtime flow
+1. `src/main.py` validates `DISCORD_TOKEN`, registers chatbot events, and starts Discord.
+2. `src/core/events.py` listens for direct messages and server mentions only.
+3. `src/services/llm/chat.py` fetches recent visible Discord context, builds a compact prompt, calls Groq, and stores lightweight conversation memory in SQLite.
+4. The bot sends the generated answer back to the DM or mentioned server message.
 
-## Redis contract
-- **Task payload**: `{"job_id", "job_type", "payload", "requested_by", "result_ttl"}`
-- **Queues**: tasks in `<namespace>:tasks`; results in `<namespace>:results:<job_id>` with TTL to avoid leaks.
-- **Timeouts**: gateway waits ~30s for safety scans, ~75s for LLM replies; timeouts are logged and dropped to keep Discord responsive.
+## Active components
+- **Discord bot**: `src/core/bot.py` configures the minimal message-content intent required for chat.
+- **Chat events**: `src/core/events.py` contains the chatbot-only event pipeline.
+- **LLM service**: `src/services/llm/` wraps Groq chat completions.
+- **Chat memory**: `src/db/llm.py` stores user/assistant turns in SQLite.
 
-## Adding jobs
-1. Add a handler in `microservices/worker/main.py` and register it in `HANDLERS`.
-2. Enqueue from the gateway via `taskqueue.get_task_queue().enqueue(...)`, then await `wait_for_result` in a background task.
-3. Keep payloads JSON-serializable; compute Discord-only context (e.g., channel history) in the gateway before enqueuing.
-
-## Database migration path (SQLite → Postgres)
-Central connection handling lives in `src/db/engine.py` with an opt-in guard `ALLOW_EXPERIMENTAL_POSTGRES`. Steps to complete the migration:
-1. Convert SQL placeholders from `?` to `%s` (or move to a query builder/ORM) across the `db/` modules; add migrations (Alembic) instead of ad-hoc table creation.
-2. Consolidate per-feature SQLite files into a single Postgres schema; introduce connection pooling suitable for workers.
-3. Enable `ALLOW_EXPERIMENTAL_POSTGRES=true` and point `DATABASE_URL` at Postgres; run migrations and smoke tests.
-4. For the highest-volume paths (spam detection, queue workers), consider porting handlers to Rust for throughput while keeping the Redis contract intact.
-
-Until those steps are complete, SQLite remains the default and safest backend.
+## Explicitly out of scope
+- Moderation and audit logging.
+- Economy, levels, roles, tickets, music, voice, and government features.
+- Redis queues, workers, metrics, slash-command sync, and status notifiers.
+- Rust acceleration and Node services.
