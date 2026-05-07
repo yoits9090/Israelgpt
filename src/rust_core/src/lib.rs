@@ -92,11 +92,11 @@ impl ActivityTrackerRust {
             spam_window_secs: 10.0,
             spam_threshold: 20,
             chat_window_secs: 30.0,
-            chat_active_window_secs: 30.0,
-            chat_min_messages: 3,
-            chat_min_users: 2,
-            chat_cooldown_secs: 15.0,
-            chat_trigger_chance: 0.85,
+            chat_active_window_secs: 20.0,
+            chat_min_messages: 6,
+            chat_min_users: 3,
+            chat_cooldown_secs: 45.0,
+            chat_trigger_chance: 0.35,
         }
     }
 
