@@ -1,29 +1,30 @@
-"""Chat completion service using Groq's LLM."""
+"""Chat completion service for the Israel GPT chatbot."""
 
 from __future__ import annotations
 
 import asyncio
 import re
-import time
-from typing import Optional, Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import discord
 
-from db.llm import log_message, get_recent_conversation
-from observability import count_llm_request, observe_llm_duration
+from config import CHATBOT_MAX_TOKENS, CHATBOT_MODEL, CHATBOT_TEMPERATURE
+from db.llm import get_recent_conversation, log_message
+
 from .client import get_client
 
-# URL regex for truncating links
-_URL_PATTERN = re.compile(r'https?://\S+')
+_URL_PATTERN = re.compile(r"https?://\S+")
 
 
 def _truncate_links(text: str, max_len: int = 30) -> str:
-    """Replace long URLs with truncated versions."""
-    def replacer(match):
+    """Replace long URLs with compact placeholders for channel context."""
+
+    def replacer(match: re.Match[str]) -> str:
         url = match.group(0)
         if len(url) > max_len:
             return url[:max_len] + "..."
         return url
+
     return _URL_PATTERN.sub(replacer, text)
 
 
@@ -31,41 +32,28 @@ def _call_groq_sync(messages: list[Dict[str, str]]) -> Optional[str]:
     """Synchronous Groq chat completion call."""
     client = get_client()
     if client is None:
-        count_llm_request(model="unknown", status="no_client")
         return None
 
-    model_name = "llama-3.1-8b-instant"
-    start = time.perf_counter()
     try:
         completion = client.chat.completions.create(
-            model=model_name,
+            model=CHATBOT_MODEL,
             messages=messages,
-            max_tokens=512,
-            temperature=0.7,
+            max_tokens=CHATBOT_MAX_TOKENS,
+            temperature=CHATBOT_TEMPERATURE,
         )
-        duration = time.perf_counter() - start
-        observe_llm_duration(model_name, duration)
         message = completion.choices[0].message
-        content = message.content if message and message.content else None
-        count_llm_request(model=model_name, status="success" if content else "empty")
-        return content
+        return message.content if message and message.content else None
     except Exception as e:
-        duration = time.perf_counter() - start
-        observe_llm_duration(model_name, duration)
         print(f"Groq LLM error: {e}")
-        count_llm_request(model=model_name, status="error")
         return None
 
 
 async def fetch_channel_context(
-    channel: discord.TextChannel,
-    limit: int = 30,
+    channel: discord.abc.Messageable,
+    limit: int = 20,
 ) -> List[Tuple[str, str, str]]:
-    """
-    Fetch recent messages from a channel for context.
-    Returns list of (username, user_id, content) tuples.
-    """
-    messages = []
+    """Fetch recent non-bot channel messages for lightweight conversation context."""
+    messages: list[Tuple[str, str, str]] = []
     try:
         async for msg in channel.history(limit=limit):
             if msg.author.bot:
@@ -75,40 +63,15 @@ async def fetch_channel_context(
                 messages.append((
                     msg.author.display_name,
                     str(msg.author.id),
-                    content[:500],  # Truncate long messages
+                    content[:500],
                 ))
     except Exception as e:
         print(f"Failed to fetch channel history: {e}")
-    
-    # Reverse to chronological order (oldest first)
+
     return list(reversed(messages))
 
 
-async def get_active_users_context(
-    guild_id: int,
-    user_ids: List[int],
-    channel_id: int | None = None,
-    max_per_user: int = 5,
-) -> Dict[int, List[Tuple[str, str]]]:
-    """
-    Get recent conversation history for multiple users.
-    Returns dict of user_id -> list of (role, content) tuples.
-    """
-    context = {}
-    for uid in user_ids[:10]:  # Limit to 10 users
-        history = get_recent_conversation(
-            guild_id=guild_id,
-            user_id=uid,
-            channel_id=channel_id,
-            max_messages=max_per_user,
-            max_chars=1000,
-        )
-        if history:
-            context[uid] = history
-    return context
-
-
-async def generate_professional_reply(
+async def generate_chatbot_reply(
     user_message: str,
     username: str,
     guild_name: Optional[str] = None,
@@ -117,55 +80,46 @@ async def generate_professional_reply(
     channel_id: Optional[int] = None,
     channel_context: Optional[List[Tuple[str, str, str]]] = None,
 ) -> Optional[str]:
-    """Generate a concise, professional Discord reply using Groq's llama-3.1-8b-instant."""
+    """Generate a concise Discord chatbot reply."""
     system_prompt = (
-        "You are Guildest, a professional, concise, and helpful Discord assistant. "
-        "Speak with clarity and respect, keep replies short and actionable, and focus on being useful. "
-        "Avoid slang and bias; respond with balanced guidance, safety, and civility. "
-        "Decline unsafe or harmful requests politely and offer safer alternatives when appropriate. "
-        "Only address what is visible in the current channel context and the latest user message. "
-        "Do not mention, infer, or summarize private history, past disputes, or conversations that are not "
-        "explicitly present in the current channel context."
+        "You are Israel GPT, a focused Discord chatbot. "
+        "Your only job is to chat with users who message you directly or mention you. "
+        "Be friendly, concise, practical, and conversational. "
+        "Do not claim to moderate, manage roles, play music, run tickets, track XP, or perform server automation. "
+        "If asked for bot features beyond chatting, explain that you are now just a chatbot and offer to help in chat. "
+        "Decline unsafe requests briefly and redirect toward safe, helpful alternatives."
     )
 
-    # Build limited-length conversational context from history
-    history_messages: list[dict] = []
+    history_messages: list[dict[str, str]] = []
     if guild_id is not None and user_id is not None:
         history = get_recent_conversation(
             guild_id=guild_id,
             user_id=user_id,
             channel_id=channel_id,
-            max_messages=40,
-            max_chars=6000,
+            max_messages=20,
+            max_chars=4000,
         )
         for role, content in history:
             role_name = "assistant" if role == "assistant" else "user"
             history_messages.append({"role": role_name, "content": content})
 
-    # Build channel context string (last 30 messages)
     channel_context_str = ""
     if channel_context:
-        chat_lines = []
-        for uname, uid, content in channel_context[-30:]:
-            chat_lines.append(f"{uname}: {content}")
+        chat_lines = [f"{uname}: {content}" for uname, _uid, content in channel_context[-20:]]
         if chat_lines:
             channel_context_str = (
-                "\n--- Recent chat in this channel ---\n"
+                "\n--- Recent visible chat context ---\n"
                 + "\n".join(chat_lines)
-                + "\n--- End of recent chat ---\n"
+                + "\n--- End context ---\n"
             )
 
-    # For the current turn, keep content compact but informative
     current_content = (
-        f"Server: {guild_name or 'unknown'}\n"
+        f"Server: {guild_name or 'direct message'}\n"
         f"{channel_context_str}"
-        f"Now {username} said: {user_message}\n\n"
-        "Join the conversation naturally. Be relevant, concise, and professional. "
-        "Keep it short, friendly, and helpful for Discord. "
-        "If the recent channel context does not support a claim, do not make that claim."
+        f"{username}: {user_message}\n\n"
+        "Reply as Israel GPT. Keep the answer helpful and suitable for Discord."
     )
 
-    # Log the user prompt
     if guild_id is not None and user_id is not None:
         log_message(
             guild_id=guild_id,
@@ -175,13 +129,12 @@ async def generate_professional_reply(
             content=user_message,
         )
 
-    messages: list[dict] = [
+    messages: list[dict[str, str]] = [
         {"role": "system", "content": system_prompt},
         *history_messages,
         {"role": "user", "content": current_content},
     ]
 
-    loop = asyncio.get_running_loop()
     reply = await asyncio.to_thread(_call_groq_sync, messages)
 
     if reply is not None and guild_id is not None and user_id is not None:
@@ -194,3 +147,7 @@ async def generate_professional_reply(
         )
 
     return reply
+
+
+# Backwards-compatible alias for microservices or older imports that still call the old name.
+generate_professional_reply = generate_chatbot_reply
